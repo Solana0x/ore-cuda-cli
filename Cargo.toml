@@ -23,7 +23,7 @@ chrono = "0.4.38"
 clap = { version = "4.4.12", features = ["derive"] }
 colored = "2.0"
 drillx = { path = "drillx/drillx" }
-equix = "0.1.6"
+equix = { path = "Equix" }
 futures = "0.3.30"
 num_cpus = "1.16.0"
 ore-api = "2.1.0"
