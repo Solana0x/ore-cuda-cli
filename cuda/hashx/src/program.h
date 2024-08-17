@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <hashx.h>
+#include <../include/hashx.h>
 #include "instruction.h"
 #include "siphash.h"
 #include "blake2.h"
