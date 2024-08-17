@@ -78,7 +78,7 @@ __global__ void hashx_exec_kernel(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* 
     uint64_t* r = &shared_r[8 * threadIdx.x];
 
     #ifndef HASHX_BLOCK_MODE
-    hashx_siphash24_ctr_state512(&ctx->keys, input, r);
+    hashx_siphash24_ctr_state512(&ctx->keys, reinterpret_cast<const uint64_t*>(input), r);
     #else
     hashx_blake2b_4r(&ctx->params, input, size, r);
     #endif
@@ -131,7 +131,7 @@ __global__ void hashx_exec_kernel(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* 
 }
 
 void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output, size_t num_hashes) {
-    int threads_per_block = 256;
+    int threads_per_block = 1024;
     int num_blocks = (num_hashes + threads_per_block - 1) / threads_per_block;
 
     size_t shared_memory_size = 8 * sizeof(uint64_t) * threads_per_block;
