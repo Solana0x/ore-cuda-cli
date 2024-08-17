@@ -65,21 +65,13 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    printf("Kernel finished. Copying data back to CPU...\n");
+    printf("Kernel finished. Copying data back to CPU in chunks...\n");
 
-    // Debugging: Print the pointer and size information before copying
-    printf("hash_space[0] pointer: %p\n", (void*)memPool->hash_space[0]);
-    printf("Copy size: %lu bytes\n", BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t));
-
-    // Ensure the memory being copied is within bounds
-    if (memPool->hash_space[0] == nullptr) {
-        fprintf(stderr, "Error: hash_space[0] is nullptr\n");
-        delete memPool;
-        return;
+    // Copy each hash result from the GPU to the CPU in smaller chunks
+    for (int i = 0; i < BATCH_SIZE; i++) {
+        printf("Copying hash_space[%d]...\n", i);
+        CUDA_CHECK(cudaMemcpy(out + i * INDEX_SPACE, memPool->hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
     }
-
-    // Copy all hash results from the GPU to the CPU in one go
-    CUDA_CHECK(cudaMemcpy(out, memPool->hash_space[0], BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
 
     // Synchronize after copying the data
     CUDA_CHECK(cudaDeviceSynchronize());
