@@ -29,7 +29,7 @@ hashx_ctx* hashx_alloc(hashx_type type) {
     ctx->program = NULL;
     
     // Set the type
-    ctx->type = HASHX_UNDEFINED;  // Replace 'HASHX_UNDEFINED' with the appropriate value
+    ctx->type = HASHX_UNKNOWN;  // Replace with the appropriate default value from hashx_type
 
     // Choose the appropriate type
     if (type & HASHX_COMPILED) {
