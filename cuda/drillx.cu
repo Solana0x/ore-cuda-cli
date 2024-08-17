@@ -133,3 +133,4 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
     CUDA_CHECK(cudaFree(d_solutions));
     CUDA_CHECK(cudaFree(d_num_sols));
 }
+
