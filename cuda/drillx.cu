@@ -1,11 +1,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "drillx.h"
-#include "equixincludeequix.h"
+#include "equix/include/equix.h"
 #include "hashx/include/hashx.h"
-#include "equixsrccontext.h"
+#include "equix/src/context.h"
 #include "equix/src/solver.h"
-#include "equixsrcsolver_heap.h"
+#include "equix/src/solver_heap.h"
 #include "hashx/src/context.h"
 
 const int BATCH_SIZE = 4096;
