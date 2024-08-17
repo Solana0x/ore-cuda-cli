@@ -19,7 +19,7 @@
 #endif
 
 // Initialize the program and set the appropriate keys
-static int initialize_program(hashx_ctx* ctx, hashx_program* program, siphash_state keys[2]) {
+static __device__ int initialize_program(hashx_ctx* ctx, hashx_program* program, siphash_state keys[2]) {
     if (!hashx_program_generate(&keys[0], program)) {
         return 0;
     }
@@ -37,36 +37,45 @@ static int initialize_program(hashx_ctx* ctx, hashx_program* program, siphash_st
     return 1;
 }
 
-int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
-    assert(ctx != NULL && ctx != HASHX_NOTSUPP);
-    assert(seed != NULL || size == 0);
-
-    siphash_state keys[2];
+__global__ void hashx_make_kernel(hashx_ctx* ctx, const void* seed, size_t size, siphash_state* keys) {
     blake2b_state hash_state;
 
     // Hash the seed to produce the keys
     hashx_blake2b_init_param(&hash_state, &hashx_blake2_params);
     hashx_blake2b_update(&hash_state, seed, size);
-    hashx_blake2b_final(&hash_state, keys, sizeof(keys));
+    hashx_blake2b_final(&hash_state, keys, sizeof(siphash_state) * 2);
 
     if (ctx->type & HASHX_COMPILED) {
         hashx_program program;
         if (!initialize_program(ctx, &program, keys)) {
-            return 0;
+            return;
         }
         hashx_compile(&program, ctx->code);
-        return 1;
+    } else {
+        initialize_program(ctx, ctx->program, keys);
     }
-
-    return initialize_program(ctx, ctx->program, keys);
 }
 
-__device__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT, void* output) {
+int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
     assert(ctx != NULL && ctx != HASHX_NOTSUPP);
-    assert(output != NULL);
-    assert(ctx->has_program);
+    assert(seed != NULL || size == 0);
 
-    uint64_t r[8];
+    siphash_state keys[2];
+
+    hashx_make_kernel<<<1, 1>>>(ctx, seed, size, keys);
+    cudaDeviceSynchronize();
+
+    return 1;
+}
+
+__global__ void hashx_exec_kernel(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output, size_t num_hashes) {
+    extern __shared__ uint64_t shared_r[];
+
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+    if (idx >= num_hashes) return;
+
+    uint64_t* r = &shared_r[8 * threadIdx.x];
 
     #ifndef HASHX_BLOCK_MODE
     hashx_siphash24_ctr_state512(&ctx->keys, input, r);
@@ -74,7 +83,6 @@ __device__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT, void* output) {
     hashx_blake2b_4r(&ctx->params, input, size, r);
     #endif
 
-    // Execute either the compiled or interpreted code
     if (ctx->type & HASHX_COMPILED) {
         ctx->func(r);
     } else {
@@ -105,19 +113,29 @@ __device__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT, void* output) {
 
     // Optimized output handling based on HASHX_SIZE
     #if HASHX_SIZE > 0
+    uint8_t* temp_out = static_cast<uint8_t*>(output) + idx * HASHX_SIZE;
     if constexpr (HASHX_SIZE % 8 == 0) {
-        uint8_t* temp_out = static_cast<uint8_t*>(output);
         if constexpr (HASHX_SIZE >= 8) store64(temp_out + 0, r[0] ^ r[4]);
         if constexpr (HASHX_SIZE >= 16) store64(temp_out + 8, r[1] ^ r[5]);
         if constexpr (HASHX_SIZE >= 24) store64(temp_out + 16, r[2] ^ r[6]);
         if constexpr (HASHX_SIZE >= 32) store64(temp_out + 24, r[3] ^ r[7]);
     } else {
-        uint8_t temp_out[32];
-        if constexpr (HASHX_SIZE > 0) store64(temp_out + 0, r[0] ^ r[4]);
-        if constexpr (HASHX_SIZE > 8) store64(temp_out + 8, r[1] ^ r[5]);
-        if constexpr (HASHX_SIZE > 16) store64(temp_out + 16, r[2] ^ r[6]);
-        if constexpr (HASHX_SIZE > 24) store64(temp_out + 24, r[3] ^ r[7]);
-        memcpy(output, temp_out, HASHX_SIZE);
+        uint8_t temp_out_local[32];
+        if constexpr (HASHX_SIZE > 0) store64(temp_out_local + 0, r[0] ^ r[4]);
+        if constexpr (HASHX_SIZE > 8) store64(temp_out_local + 8, r[1] ^ r[5]);
+        if constexpr (HASHX_SIZE > 16) store64(temp_out_local + 16, r[2] ^ r[6]);
+        if constexpr (HASHX_SIZE > 24) store64(temp_out_local + 24, r[3] ^ r[7]);
+        memcpy(temp_out, temp_out_local, HASHX_SIZE);
     }
     #endif
+}
+
+void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output, size_t num_hashes) {
+    int threads_per_block = 256;
+    int num_blocks = (num_hashes + threads_per_block - 1) / threads_per_block;
+
+    size_t shared_memory_size = 8 * sizeof(uint64_t) * threads_per_block;
+
+    hashx_exec_kernel<<<num_blocks, threads_per_block, shared_memory_size>>>(ctx, HASHX_INPUT_ARGS, output, num_hashes);
+    cudaDeviceSynchronize();
 }
