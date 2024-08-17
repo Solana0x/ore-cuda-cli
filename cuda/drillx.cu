@@ -33,7 +33,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     // Use unified memory for automatic paging between CPU and GPU
     MemoryPool* memPool;
     CUDA_CHECK(cudaMallocManaged(&memPool, sizeof(MemoryPool)));
-    new(memPool) MemoryPool(BATCH_SIZE); // Placement new to initialize the MemoryPool object
+    memPool = new(memPool) MemoryPool(BATCH_SIZE); // Initialize the MemoryPool object
 
     uint8_t seed[40];
     memcpy(seed, challenge, 32);
