@@ -35,4 +35,3 @@ codegen-units = 1
 opt-level = 3
 
 [patch.crates-io]
-equix = { path = "../equix" }
