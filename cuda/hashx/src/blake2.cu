@@ -1,113 +1,267 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
-#include <cuda_runtime.h>
+#include <stdlib.h>
 
-#define BLAKE2B_BLOCKBYTES 128
+#include "blake2.h"
+#include "hashx_endian.h"
 
-__constant__ uint64_t blake2b_IV[8] = {
+// Constants for Blake2b
+static const uint64_t blake2b_IV[8] = {
     UINT64_C(0x6a09e667f3bcc908), UINT64_C(0xbb67ae8584caa73b),
     UINT64_C(0x3c6ef372fe94f82b), UINT64_C(0xa54ff53a5f1d36f1),
     UINT64_C(0x510e527fade682d1), UINT64_C(0x9b05688c2b3e6c1f),
     UINT64_C(0x1f83d9abfb41bd6b), UINT64_C(0x5be0cd19137e2179)
 };
 
-__device__ __forceinline__ uint64_t rotr64(const uint64_t w, const unsigned c) {
+// Predefined Sigma Constants
+static const uint8_t blake2b_sigma[12][16] = {
+    { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+    { 14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3 },
+    { 11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4 },
+    { 7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8 },
+    { 9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13 },
+    { 2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9 },
+    { 12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11 },
+    { 13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10 },
+    { 6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5 },
+    { 10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0 },
+    { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+    { 14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3 }
+};
+
+// Rotate right function
+static FORCE_INLINE uint64_t rotr64(const uint64_t w, const unsigned c) {
     return (w >> c) | (w << (64 - c));
 }
 
-#define G(r, i, j, a, b, c, d, m)           \
-    do {                                    \
-        a = a + b + m[i];                   \
-        d = rotr64(d ^ a, 32);              \
-        c = c + d;                          \
-        b = rotr64(b ^ c, 24);              \
-        a = a + b + m[j];                   \
-        d = rotr64(d ^ a, 16);              \
-        c = c + d;                          \
-        b = rotr64(b ^ c, 63);              \
-    } while (0)
+// Set the last block indicator flag
+static FORCE_INLINE void blake2b_set_lastblock(blake2b_state* S) {
+    S->f[0] = (uint64_t)-1;
+}
 
-#define ROUND(r, v, m)                      \
-    do {                                    \
-        G(r, 0, 1, v[0], v[4], v[8], v[12], m);   \
-        G(r, 2, 3, v[1], v[5], v[9], v[13], m);   \
-        G(r, 4, 5, v[2], v[6], v[10], v[14], m);  \
-        G(r, 6, 7, v[3], v[7], v[11], v[15], m);  \
-        G(r, 8, 9, v[0], v[5], v[10], v[15], m);  \
-        G(r, 10, 11, v[1], v[6], v[11], v[12], m);\
-        G(r, 12, 13, v[2], v[7], v[8], v[13], m); \
-        G(r, 14, 15, v[3], v[4], v[9], v[14], m); \
-    } while (0)
-
-__global__ void blake2b_compress(uint64_t* h, const uint8_t* in, uint64_t* t, uint64_t* f, size_t num_blocks) {
-    uint64_t v[16];
-    uint64_t m[16];
-
-    for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_blocks; i += blockDim.x * gridDim.x) {
-        const uint8_t* block = in + i * BLAKE2B_BLOCKBYTES;
-
-        for (int j = 0; j < 16; ++j) {
-            m[j] = ((uint64_t*)block)[j];
-        }
-
-        for (int j = 0; j < 8; ++j) {
-            v[j] = h[j];
-        }
-
-        v[8] = blake2b_IV[0];
-        v[9] = blake2b_IV[1];
-        v[10] = blake2b_IV[2];
-        v[11] = blake2b_IV[3];
-        v[12] = blake2b_IV[4] ^ t[0];
-        v[13] = blake2b_IV[5] ^ t[1];
-        v[14] = blake2b_IV[6] ^ f[0];
-        v[15] = blake2b_IV[7] ^ f[1];
-
-        ROUND(0, v, m);
-        ROUND(1, v, m);
-        ROUND(2, v, m);
-        ROUND(3, v, m);
-        ROUND(4, v, m);
-        ROUND(5, v, m);
-        ROUND(6, v, m);
-        ROUND(7, v, m);
-        ROUND(8, v, m);
-        ROUND(9, v, m);
-        ROUND(10, v, m);
-        ROUND(11, v, m);
-
-        for (int j = 0; j < 8; ++j) {
-            h[j] ^= v[j] ^ v[j + 8];
-        }
+// Increment the counter
+static FORCE_INLINE void blake2b_increment_counter(blake2b_state* S, uint64_t inc) {
+    S->t[0] += inc;
+    if (S->t[0] < inc) {
+        S->t[1]++;
     }
 }
 
-extern "C" void blake2b_hash_gpu(uint64_t* h, const uint8_t* in, size_t inlen, uint64_t* t, uint64_t* f, size_t num_blocks) {
-    uint8_t* d_in;
-    uint64_t* d_h;
-    uint64_t* d_t;
-    uint64_t* d_f;
+// Initialize the Blake2b state with IVs
+static FORCE_INLINE void blake2b_init0(blake2b_state* S) {
+    memset(S, 0, sizeof(*S));
+    memcpy(S->h, blake2b_IV, sizeof(S->h));
+}
 
-    cudaMalloc(&d_in, inlen);
-    cudaMalloc(&d_h, 8 * sizeof(uint64_t));
-    cudaMalloc(&d_t, 2 * sizeof(uint64_t));
-    cudaMalloc(&d_f, 2 * sizeof(uint64_t));
+// Initialize the Blake2b state with parameters
+int hashx_blake2b_init_param(blake2b_state* S, const blake2b_param* P) {
+    const unsigned char* p = (const unsigned char*)P;
+    unsigned int i;
 
-    cudaMemcpy(d_in, in, inlen, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_h, h, 8 * sizeof(uint64_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_t, t, 2 * sizeof(uint64_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_f, f, 2 * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    if (NULL == P || NULL == S) {
+        return -1;
+    }
 
-    int threads_per_block = 256;
-    int blocks_per_grid = (num_blocks + threads_per_block - 1) / threads_per_block;
+    blake2b_init0(S);
+    /* IV XOR Parameter Block */
+    for (i = 0; i < 8; ++i) {
+        S->h[i] ^= load64(&p[i * sizeof(S->h[i])]);
+    }
+    S->outlen = P->digest_length;
+    return 0;
+}
 
-    blake2b_compress<<<blocks_per_grid, threads_per_block>>>(d_h, d_in, d_t, d_f, num_blocks);
+// G function for Blake2b's F function
+#define G(r, i, j, a, b, c, d)                                               \
+    do {                                                                     \
+        a = a + b + m[blake2b_sigma[r][i]];                                  \
+        d = rotr64(d ^ a, 32);                                               \
+        c = c + d;                                                           \
+        b = rotr64(b ^ c, 24);                                               \
+        a = a + b + m[blake2b_sigma[r][j]];                                  \
+        d = rotr64(d ^ a, 16);                                               \
+        c = c + d;                                                           \
+        b = rotr64(b ^ c, 63);                                               \
+    } while (0)
 
-    cudaMemcpy(h, d_h, 8 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+// Round function with the inner rounds of Blake2b
+#define ROUND(r) ROUND_INNER(r)
+#define ROUND_INNER(r)                                                       \
+    do {                                                                     \
+        G(r,  0,  1, v[0], v[4], v[8], v[12]);                               \
+        G(r,  2,  3, v[1], v[5], v[9], v[13]);                               \
+        G(r,  4,  5, v[2], v[6], v[10], v[14]);                              \
+        G(r,  6,  7, v[3], v[7], v[11], v[15]);                              \
+        G(r,  8,  9, v[0], v[5], v[10], v[15]);                              \
+        G(r, 10, 11, v[1], v[6], v[11], v[12]);                              \
+        G(r, 12, 13, v[2], v[7], v[8], v[13]);                               \
+        G(r, 14, 15, v[3], v[4], v[9], v[14]);                               \
+    } while (0)
 
-    cudaFree(d_in);
-    cudaFree(d_h);
-    cudaFree(d_t);
-    cudaFree(d_f);
+// Compress function for Blake2b
+static void blake2b_compress(blake2b_state* S, const uint8_t* block) {
+    uint64_t m[16];
+    uint64_t v[16];
+    unsigned int i;
+
+    for (i = 0; i < 16; ++i) {
+        m[i] = load64(block + i * sizeof(m[i]));
+    }
+
+    for (i = 0; i < 8; ++i) {
+        v[i] = S->h[i];
+    }
+
+    v[8] = blake2b_IV[0];
+    v[9] = blake2b_IV[1];
+    v[10] = blake2b_IV[2];
+    v[11] = blake2b_IV[3];
+    v[12] = blake2b_IV[4] ^ S->t[0];
+    v[13] = blake2b_IV[5] ^ S->t[1];
+    v[14] = blake2b_IV[6] ^ S->f[0];
+    v[15] = blake2b_IV[7] ^ S->f[1];
+
+    // 12 rounds
+    ROUND(0);
+    ROUND(1);
+    ROUND(2);
+    ROUND(3);
+    ROUND(4);
+    ROUND(5);
+    ROUND(6);
+    ROUND(7);
+    ROUND(8);
+    ROUND(9);
+    ROUND(10);
+    ROUND(11);
+
+    for (i = 0; i < 8; ++i) {
+        S->h[i] ^= v[i] ^ v[i + 8];
+    }
+}
+
+// 4-round version of the Blake2b compress function
+static void blake2b_compress_4r(blake2b_state* S, const uint8_t* block) {
+    uint64_t m[16];
+    uint64_t v[16];
+    unsigned int i;
+
+    for (i = 0; i < 16; ++i) {
+        m[i] = load64(block + i * sizeof(m[i]));
+    }
+
+    for (i = 0; i < 8; ++i) {
+        v[i] = S->h[i];
+    }
+
+    v[8] = blake2b_IV[0];
+    v[9] = blake2b_IV[1];
+    v[10] = blake2b_IV[2];
+    v[11] = blake2b_IV[3];
+    v[12] = blake2b_IV[4] ^ S->t[0];
+    v[13] = blake2b_IV[5] ^ S->t[1];
+    v[14] = blake2b_IV[6] ^ S->f[0];
+    v[15] = blake2b_IV[7] ^ S->f[1];
+
+    // 4 rounds
+    ROUND(0);
+    ROUND(1);
+    ROUND(2);
+    ROUND(3);
+
+    for (i = 0; i < 8; ++i) {
+        S->h[i] ^= v[i] ^ v[i + 8];
+    }
+}
+
+// Update function for Blake2b
+int hashx_blake2b_update(blake2b_state* S, const void* in, size_t inlen) {
+    const uint8_t* pin = (const uint8_t*)in;
+
+    if (inlen == 0) {
+        return 0;
+    }
+
+    if (S == NULL || in == NULL) {
+        return -1;
+    }
+
+    if (S->f[0] != 0) {
+        return -1;
+    }
+
+    while (inlen > 0) {
+        size_t fill = BLAKE2B_BLOCKBYTES - S->buflen;
+
+        if (inlen > fill) {
+            memcpy(S->buf + S->buflen, pin, fill);
+            blake2b_increment_counter(S, BLAKE2B_BLOCKBYTES);
+            blake2b_compress(S, S->buf);
+            S->buflen = 0;
+            inlen -= fill;
+            pin += fill;
+        } else {
+            memcpy(S->buf + S->buflen, pin, inlen);
+            S->buflen += (unsigned int)inlen;
+            break;
+        }
+    }
+
+    return 0;
+}
+
+// Finalization function for Blake2b
+int hashx_blake2b_final(blake2b_state* S, void* out, size_t outlen) {
+    uint8_t buffer[BLAKE2B_OUTBYTES] = { 0 };
+    unsigned int i;
+
+    if (S == NULL || out == NULL || outlen < S->outlen) {
+        return -1;
+    }
+
+    if (S->f[0] != 0) {
+        return -1;
+    }
+
+    blake2b_increment_counter(S, S->buflen);
+    blake2b_set_lastblock(S);
+    memset(S->buf + S->buflen, 0, BLAKE2B_BLOCKBYTES - S->buflen); /* Padding */
+    blake2b_compress(S, S->buf);
+
+    for (i = 0; i < 8; ++i) { /* Output full hash to temp buffer */
+        store64(buffer + sizeof(S->h[i]) * i, S->h[i]);
+    }
+
+    memcpy(out, buffer, S->outlen);
+
+    return 0;
+}
+
+// 4-round version of Blake2b
+void hashx_blake2b_4r(const blake2b_param* params, const void* in, size_t inlen, void* out) {
+    blake2b_state state;
+    const uint8_t* p = (const uint8_t*)params;
+
+    blake2b_init0(&state);
+    for (unsigned i = 0; i < 8; ++i) {
+        state.h[i] ^= load64(&p[i * sizeof(state.h[i])]);
+    }
+
+    const uint8_t* pin = (const uint8_t*)in;
+
+    while (inlen > BLAKE2B_BLOCKBYTES) {
+        blake2b_increment_counter(&state, BLAKE2B_BLOCKBYTES);
+        blake2b_compress_4r(&state, pin);
+        inlen -= BLAKE2B_BLOCKBYTES;
+        pin += BLAKE2B_BLOCKBYTES;
+    }
+
+    memcpy(state.buf, pin, inlen);
+    blake2b_increment_counter(&state, inlen);
+    blake2b_set_lastblock(&state);
+    blake2b_compress_4r(&state, state.buf);
+
+    /* Output hash */
+    memcpy(out, state.h, sizeof(state.h));
 }
