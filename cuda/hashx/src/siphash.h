@@ -5,7 +5,7 @@
 #define SIPHASH_H
 
 #include <stdint.h>
-#include <hashx.h>
+#include <../include/hashx.h>
 
 #define ROTL(x, b) (((x) << (b)) | ((x) >> (64 - (b))))
 #define SIPROUND(v0, v1, v2, v3) \
