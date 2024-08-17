@@ -27,7 +27,7 @@ extern "C" void set_num_hashing_rounds(int rounds) {
 
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     // Increase the CUDA heap size to handle larger allocations
-    size_t heapSize = 1024 * 1024 * 1024; // 1 GB
+    size_t heapSize = 1024 * 1024 * 1024 * 24; // 1 GB
     CUDA_CHECK(cudaDeviceSetLimit(cudaLimitMallocHeapSize, heapSize));
 
     MemoryPool memPool(BATCH_SIZE);
