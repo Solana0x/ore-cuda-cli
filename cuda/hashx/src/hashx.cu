@@ -2,7 +2,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include <../include/hashx.h>
+#include <hashx.h>
 #include "blake2.h"
 #include "hashx_endian.h"
 #include "program.h"
@@ -50,7 +50,7 @@ __global__ void hashx_kernel(const hashx_ctx* ctx, const void* input, void* outp
     __syncthreads();
 
 #ifndef HASHX_BLOCK_MODE
-    hashx_siphash24_ctr_state512(&ctx->keys, shared_r, r);
+    hashx_siphash24_ctr_state512(&ctx->keys, shared_r, r);  // Updated function call
 #else
     hashx_blake2b_4r(&ctx->params, shared_r, size, r);
 #endif
@@ -77,29 +77,7 @@ __global__ void hashx_kernel(const hashx_ctx* ctx, const void* input, void* outp
     }
 }
 
-int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
-    assert(ctx != NULL && ctx != HASHX_NOTSUPP);
-    assert(seed != NULL || size == 0);
-
-    siphash_state keys[2];
-    blake2b_state hash_state;
-    hashx_blake2b_init_param(&hash_state, &hashx_blake2_params);
-    hashx_blake2b_update(&hash_state, seed, size);
-    hashx_blake2b_final(&hash_state, &keys, sizeof(keys));
-
-    if (ctx->type & HASHX_COMPILED) {
-        hashx_program program;
-        if (!initialize_program(ctx, &program, keys)) {
-            return 0;
-        }
-        hashx_compile(&program, ctx->code);
-        return 1;
-    }
-    return initialize_program(ctx, ctx->program, keys);
-}
-
-static int initialize_program(hashx_ctx* ctx, hashx_program* program,
-                              siphash_state keys[2]) {
+static int initialize_program(hashx_ctx* ctx, hashx_program* program, siphash_state keys[2]) {
     if (!hashx_program_generate(&keys[0], program)) {
         return 0;
     }
@@ -112,4 +90,25 @@ static int initialize_program(hashx_ctx* ctx, hashx_program* program,
     ctx->has_program = true;
 #endif
     return 1;
+}
+
+int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
+    assert(ctx != NULL && ctx != HASHX_NOTSUPP);
+    assert(seed != NULL || size == 0);
+
+    siphash_state keys[2];
+    blake2b_state hash_state;
+    hashx_blake2b_init_param(&hash_state, &hashx_blake2_params);
+    hashx_blake2b_update(&hash_state, seed, size);
+    hashx_blake2b_final(&hash_state, &keys, sizeof(keys));
+
+    if (ctx->type & HASHX_COMPILED) {
+        hashx_program program;
+        if (!initialize_program(ctx, &program, keys)) {  // Corrected function call
+            return 0;
+        }
+        hashx_compile(&program, ctx->code);
+        return 1;
+    }
+    return initialize_program(ctx, ctx->program, keys);  // Corrected function call
 }
