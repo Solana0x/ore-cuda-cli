@@ -1,6 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
-#include <hashx.h>
+#include <../include/hashx.h>
 #include "context.h"
 #include "compiler.h"
 #include "program.h"
@@ -12,7 +12,7 @@
 #define HASHX_SALT "HashX v1"
 #endif
 
-// Device constant for Blake2b parameters
+// The definition remains here
 __device__ const blake2b_param hashx_blake2_params = {
     64, 0, 1, 1, 0, 0, 0, 0, { 0 }, STRINGIZE(HASHX_SALT), { 0 }
 };
@@ -20,14 +20,13 @@ __device__ const blake2b_param hashx_blake2_params = {
 hashx_ctx* hashx_alloc(hashx_type type) {
     hashx_ctx* ctx = NULL;
 
-    // Allocate unified memory for context and check for errors
+    // Allocate unified memory for context
     cudaError_t err = cudaMallocManaged(&ctx, sizeof(hashx_ctx));
-    if (err != cudaSuccess || ctx == NULL) {
-        fprintf(stderr, "Failed to allocate memory for hashx_ctx: %s\n", cudaGetErrorString(err));
+    if (err != cudaSuccess) {
         return NULL;
     }
 
-    // Initialize pointers to NULL to avoid undefined behavior
+    // Initialize pointers to NULL
     ctx->code = NULL;
     ctx->program = NULL;
 
@@ -40,8 +39,7 @@ hashx_ctx* hashx_alloc(hashx_type type) {
         ctx->type = HASHX_COMPILED;
     } else {
         err = cudaMallocManaged(&ctx->program, sizeof(hashx_program));
-        if (err != cudaSuccess || ctx->program == NULL) {
-            fprintf(stderr, "Failed to allocate memory for hashx_program: %s\n", cudaGetErrorString(err));
+        if (err != cudaSuccess) {
             cudaFree(ctx);
             return NULL;
         }
@@ -49,7 +47,7 @@ hashx_ctx* hashx_alloc(hashx_type type) {
     }
 
 #ifdef HASHX_BLOCK_MODE
-    // Direct initialization of blake2b_param structure (faster than memcpy)
+    // Directly initialize the blake2b_param structure
     ctx->params = hashx_blake2_params;
 #endif
 
