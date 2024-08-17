@@ -9,7 +9,7 @@
 #include "equix/src/solver_heap.h"
 #include "hashx/src/context.h"
 
-const int BATCH_SIZE = 16384; // Large batch size
+const int BATCH_SIZE = 1024; // Reduced batch size for debugging
 const int NUM_HASHING_ROUNDS = 1;
 
 #define CUDA_CHECK(call) \
@@ -52,12 +52,16 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
+    printf("Launching kernel...\n");
+
     // Perform the hashing on the GPU
     do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool->ctxs, memPool->hash_space, NUM_HASHING_ROUNDS);
+    
+    CUDA_CHECK(cudaPeekAtLastError());
     CUDA_CHECK(cudaGetLastError());
-
-    // Synchronize the stream to ensure the kernel execution completes
     CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    printf("Kernel finished. Copying data back to CPU...\n");
 
     // Ensure hash results are transferred from GPU to CPU
     for (int i = 0; i < BATCH_SIZE; i++) {
@@ -67,6 +71,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
 
     // Synchronize after copying the data
     CUDA_CHECK(cudaDeviceSynchronize());
+
+    printf("Data copied back to CPU. Cleaning up...\n");
 
     // Destroy the stream
     CUDA_CHECK(cudaStreamDestroy(stream));
@@ -109,6 +115,7 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
     int blocksPerGrid = (num_sets + threadsPerBlock - 1) / threadsPerBlock;
 
     solve_all_stages_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_hashes, d_heaps, d_solutions, d_num_sols);
+    CUDA_CHECK(cudaPeekAtLastError());
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaDeviceSynchronize());
