@@ -53,8 +53,8 @@ int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
     return initialize_program(ctx, ctx->program, keys);
 }
 
-// Ensure visibility across translation units
-extern "C" __device__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output) {
+// Ensure single definition with C++ linkage
+__device__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output) {
     assert(ctx != NULL && ctx != HASHX_NOTSUPP);
     assert(output != NULL);
     assert(ctx->has_program);
