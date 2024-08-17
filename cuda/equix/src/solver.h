@@ -5,7 +5,7 @@
 #define SOLVER_H
 
 #include <../include/equix.h>
-#include <hashx_endian.h>
+#include <../hashx/src/hashx_endian.h>
 #include <stdbool.h>
 #include "context.h"
 
