@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include <limits.h>
 #include <stddef.h>
-#include <hashx.h>
+#include <../include/hashx.h>
 
 #if defined(__cplusplus)
 extern "C" {
