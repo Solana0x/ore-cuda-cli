@@ -2,7 +2,7 @@
 #include "solver.h"
 #include "context.h"
 #include "solver_heap.h"
-#include <hashx_endian.h>
+#include <../../hashx/src/hashx_endian.h>
 #include <string.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -117,23 +117,21 @@ __device__ void build_solution(equix_solution* solution, solver_heap* heap, s3_i
 }
 
 __device__ void solve_stage0(uint64_t* hashes, solver_heap* heap) {
-    // Clearing counts to zero
-    memset(heap->stage1_indices.counts, 0, sizeof(heap->stage1_indices.counts));
-
+    CLEAR(heap->stage1_indices.counts);
     for (u32 i = 0; i < INDEX_SPACE; ++i) {
         uint64_t value = hashes[i];
         u32 bucket_idx = value % NUM_COARSE_BUCKETS;
-        u32 item_idx = atomicAdd(&STAGE1_SIZE(bucket_idx), 1);  // Atomic increment to avoid race conditions
-        if (item_idx < COARSE_BUCKET_ITEMS) {
-            STAGE1_IDX(bucket_idx, item_idx) = i;
-            STAGE1_DATA(bucket_idx, item_idx) = value / NUM_COARSE_BUCKETS; /* 52 bits */
-        }
+        u32 item_idx = atomicAdd_u16(reinterpret_cast<uint16_t*>(&heap->stage1_indices.counts[bucket_idx]), 1);  // Correct cast
+        if (item_idx >= COARSE_BUCKET_ITEMS)
+            continue;
+        STAGE1_IDX(bucket_idx, item_idx) = i;
+        STAGE1_DATA(bucket_idx, item_idx) = value / NUM_COARSE_BUCKETS; /* 52 bits */
     }
 }
 
 __device__ void hash_stage0i(hashx_ctx* hash_func, uint64_t* out, uint32_t i) {
     uint64_t hash = hash_value(hash_func, i);
-    out[i] = hash;
+    out[i] = hash;  // Direct assignment
 }
 
 #define MAKE_PAIRS1                                                           \
@@ -141,44 +139,39 @@ __device__ void hash_stage0i(hashx_ctx* hash_func, uint64_t* out, uint32_t i) {
     u32 fine_buck_idx = value % NUM_FINE_BUCKETS;                             \
     u32 fine_cpl_bucket = INVERT_SCRATCH(fine_buck_idx);                      \
     u32 fine_cpl_size = SCRATCH_SIZE(fine_cpl_bucket);                        \
-    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; ++fine_idx) {            \
+    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; fine_idx += 4) {         \
         u32 cpl_index = SCRATCH(fine_cpl_bucket, fine_idx);                   \
         stage1_data_item cpl_value = STAGE1_DATA(cpl_bucket, cpl_index);      \
         stage1_data_item sum = value + cpl_value;                             \
         assert((sum % NUM_FINE_BUCKETS) == 0);                                \
         sum /= NUM_FINE_BUCKETS; /* 45 bits */                                \
         u32 s2_buck_id = sum % NUM_COARSE_BUCKETS;                            \
-        u32 s2_item_id = atomicAdd(&STAGE2_SIZE(s2_buck_id), 1);              \
-        if (s2_item_id < COARSE_BUCKET_ITEMS) {                               \
-            STAGE2_IDX(s2_buck_id, s2_item_id) =                              \
-                MAKE_ITEM(bucket_idx, item_idx, cpl_index);                   \
-            STAGE2_DATA(s2_buck_id, s2_item_id) =                             \
-                sum / NUM_COARSE_BUCKETS; /* 37 bits */                       \
-        }                                                                     \
+        u32 s2_item_id = atomicAdd_u16(reinterpret_cast<uint16_t*>(&STAGE2_SIZE(s2_buck_id)), 1);  \
+        if (s2_item_id >= COARSE_BUCKET_ITEMS)                                \
+            continue;                                                         \
+        STAGE2_IDX(s2_buck_id, s2_item_id) =                                  \
+            MAKE_ITEM(bucket_idx, item_idx, cpl_index);                       \
+        STAGE2_DATA(s2_buck_id, s2_item_id) =                                 \
+            sum / NUM_COARSE_BUCKETS; /* 37 bits */                           \
     }                                                                         \
 
 __device__ void solve_stage1(solver_heap* heap) {
-    // Clearing counts to zero
-    memset(heap->stage2_indices.counts, 0, sizeof(heap->stage2_indices.counts));
-
+    CLEAR(heap->stage2_indices.counts);
     for (u32 bucket_idx = BUCK_START; bucket_idx < BUCK_END; ++bucket_idx) {
         u32 cpl_bucket = INVERT_BUCKET(bucket_idx);
-        // Clearing scratchpad
-        memset(heap->scratch_ht.counts, 0, sizeof(heap->scratch_ht.counts));
+        CLEAR(heap->scratch_ht.counts);
         u32 cpl_buck_size = STAGE1_SIZE(cpl_bucket);
-
         for (u32 item_idx = 0; item_idx < cpl_buck_size; ++item_idx) {
             stage1_data_item value = STAGE1_DATA(cpl_bucket, item_idx);
             u32 fine_buck_idx = value % NUM_FINE_BUCKETS;
-            u32 fine_item_idx = atomicAdd(&SCRATCH_SIZE(fine_buck_idx), 1); // Atomic increment for scratch size
-            if (fine_item_idx < FINE_BUCKET_ITEMS) {
-                SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
-                if (cpl_bucket == bucket_idx) {
-                    MAKE_PAIRS1
-                }
+            u32 fine_item_idx = atomicAdd_u16(reinterpret_cast<uint16_t*>(&SCRATCH_SIZE(fine_buck_idx)), 1);
+            if (fine_item_idx >= FINE_BUCKET_ITEMS)
+                continue;
+            SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
+            if (cpl_bucket == bucket_idx) {
+                MAKE_PAIRS1
             }
         }
-
         if (cpl_bucket != bucket_idx) {
             u32 buck_size = STAGE1_SIZE(bucket_idx);
             for (u32 item_idx = 0; item_idx < buck_size; ++item_idx) {
@@ -193,44 +186,39 @@ __device__ void solve_stage1(solver_heap* heap) {
     u32 fine_buck_idx = value % NUM_FINE_BUCKETS;                             \
     u32 fine_cpl_bucket = INVERT_SCRATCH(fine_buck_idx);                      \
     u32 fine_cpl_size = SCRATCH_SIZE(fine_cpl_bucket);                        \
-    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; ++fine_idx) {            \
+    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; fine_idx += 4) {         \
         u32 cpl_index = SCRATCH(fine_cpl_bucket, fine_idx);                   \
         stage2_data_item cpl_value = STAGE2_DATA(cpl_bucket, cpl_index);      \
         stage2_data_item sum = value + cpl_value;                             \
         assert((sum % NUM_FINE_BUCKETS) == 0);                                \
         sum /= NUM_FINE_BUCKETS; /* 30 bits */                                \
         u32 s3_buck_id = sum % NUM_COARSE_BUCKETS;                            \
-        u32 s3_item_id = atomicAdd(&STAGE3_SIZE(s3_buck_id), 1);              \
-        if (s3_item_id < COARSE_BUCKET_ITEMS) {                               \
-            STAGE3_IDX(s3_buck_id, s3_item_id) =                              \
-                MAKE_ITEM(bucket_idx, item_idx, cpl_index);                   \
-            STAGE3_DATA(s3_buck_id, s3_item_id) =                             \
-                sum / NUM_COARSE_BUCKETS; /* 22 bits */                       \
-        }                                                                     \
+        u32 s3_item_id = atomicAdd_u16(reinterpret_cast<uint16_t*>(&STAGE3_SIZE(s3_buck_id)), 1);  \
+        if (s3_item_id >= COARSE_BUCKET_ITEMS)                                \
+            continue;                                                         \
+        STAGE3_IDX(s3_buck_id, s3_item_id) =                                  \
+            MAKE_ITEM(bucket_idx, item_idx, cpl_index);                       \
+        STAGE3_DATA(s3_buck_id, s3_item_id) =                                 \
+            sum / NUM_COARSE_BUCKETS; /* 22 bits */                           \
     }                                                                         \
 
 __device__ void solve_stage2(solver_heap* heap) {
-    // Clearing counts to zero
-    memset(heap->stage3_indices.counts, 0, sizeof(heap->stage3_indices.counts));
-
+    CLEAR(heap->stage3_indices.counts);
     for (u32 bucket_idx = BUCK_START; bucket_idx < BUCK_END; ++bucket_idx) {
         u32 cpl_bucket = INVERT_BUCKET(bucket_idx);
-        // Clearing scratchpad
-        memset(heap->scratch_ht.counts, 0, sizeof(heap->scratch_ht.counts));
+        CLEAR(heap->scratch_ht.counts);
         u32 cpl_buck_size = STAGE2_SIZE(cpl_bucket);
-
         for (u32 item_idx = 0; item_idx < cpl_buck_size; ++item_idx) {
             stage2_data_item value = STAGE2_DATA(cpl_bucket, item_idx);
             u32 fine_buck_idx = value % NUM_FINE_BUCKETS;
-            u32 fine_item_idx = atomicAdd(&SCRATCH_SIZE(fine_buck_idx), 1);
-            if (fine_item_idx < FINE_BUCKET_ITEMS) {
-                SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
-                if (cpl_bucket == bucket_idx) {
-                    MAKE_PAIRS2
-                }
+            u32 fine_item_idx = atomicAdd_u16(reinterpret_cast<uint16_t*>(&SCRATCH_SIZE(fine_buck_idx)), 1);
+            if (fine_item_idx >= FINE_BUCKET_ITEMS)
+                continue;
+            SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
+            if (cpl_bucket == bucket_idx) {
+                MAKE_PAIRS2
             }
         }
-
         if (cpl_bucket != bucket_idx) {
             u32 buck_size = STAGE2_SIZE(bucket_idx);
             for (u32 item_idx = 0; item_idx < buck_size; ++item_idx) {
@@ -245,7 +233,7 @@ __device__ void solve_stage2(solver_heap* heap) {
     u32 fine_buck_idx = value % NUM_FINE_BUCKETS;                             \
     u32 fine_cpl_bucket = INVERT_SCRATCH(fine_buck_idx);                      \
     u32 fine_cpl_size = SCRATCH_SIZE(fine_cpl_bucket);                        \
-    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; ++fine_idx) {            \
+    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; fine_idx += 4) {         \
         u32 cpl_index = SCRATCH(fine_cpl_bucket, fine_idx);                   \
         stage3_data_item cpl_value = STAGE3_DATA(cpl_bucket, cpl_index);      \
         stage3_data_item sum = value + cpl_value;                             \
@@ -267,20 +255,19 @@ __device__ uint32_t solve_stage3(solver_heap* heap, equix_solution output[EQUIX_
 
     for (u32 bucket_idx = BUCK_START; bucket_idx < BUCK_END; ++bucket_idx) {
         u32 cpl_bucket = -bucket_idx & (NUM_COARSE_BUCKETS - 1);
-        memset(heap->scratch_ht.counts, 0, sizeof(heap->scratch_ht.counts));
+        CLEAR(heap->scratch_ht.counts);
         u32 cpl_buck_size = STAGE3_SIZE(cpl_bucket);
         for (u32 item_idx = 0; item_idx < cpl_buck_size; ++item_idx) {
             stage3_data_item value = STAGE3_DATA(cpl_bucket, item_idx);
             u32 fine_buck_idx = value % NUM_FINE_BUCKETS;
-            u32 fine_item_idx = atomicAdd(&SCRATCH_SIZE(fine_buck_idx), 1);
-            if (fine_item_idx < FINE_BUCKET_ITEMS) {
-                SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
-                if (cpl_bucket == bucket_idx) {
-                    MAKE_PAIRS3
-                }
+            u32 fine_item_idx = atomicAdd_u16(reinterpret_cast<uint16_t*>(&SCRATCH_SIZE(fine_buck_idx)), 1);
+            if (fine_item_idx >= FINE_BUCKET_ITEMS)
+                continue;
+            SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
+            if (cpl_bucket == bucket_idx) {
+                MAKE_PAIRS3
             }
         }
-
         if (cpl_bucket != bucket_idx) {
             u32 buck_size = STAGE3_SIZE(bucket_idx);
             for (u32 item_idx = 0; item_idx < buck_size; ++item_idx) {
@@ -293,13 +280,13 @@ __device__ uint32_t solve_stage3(solver_heap* heap, equix_solution output[EQUIX_
 }
 
 // GPU kernel
-__global__ void solve_all_stages_kernel(hashx_ctx* hash_func, uint64_t* hashes, solver_heap* heaps, equix_solution* solutions, uint32_t* num_sols) {
+__global__ void solve_all_stages_kernel(uint64_t* hashes, solver_heap* heaps, equix_solution* solutions, uint32_t* num_sols) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
+    
     uint64_t* thread_hashes = hashes + (idx * INDEX_SPACE);
     solver_heap* thread_heap = &heaps[idx];
     equix_solution* thread_solutions = &solutions[idx * EQUIX_MAX_SOLS];
-
+    
     solve_stage0(thread_hashes, thread_heap);
     __syncthreads();
     solve_stage1(thread_heap);
@@ -307,10 +294,4 @@ __global__ void solve_all_stages_kernel(hashx_ctx* hash_func, uint64_t* hashes, 
     solve_stage2(thread_heap);
     __syncthreads();
     num_sols[idx] = solve_stage3(thread_heap, thread_solutions);
-}
-
-// Host code to launch the kernel
-void launch_solver(hashx_ctx* hash_func, uint64_t* hashes, solver_heap* heap, equix_solution output[EQUIX_MAX_SOLS], uint32_t* num_sols, int num_threads) {
-    int num_blocks = (num_threads + 255) / 256;
-    solve_all_stages_kernel<<<num_blocks, 256>>>(hash_func, hashes, heap, output, num_sols);
 }
