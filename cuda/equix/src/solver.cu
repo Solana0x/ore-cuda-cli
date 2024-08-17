@@ -304,16 +304,3 @@ __global__ void solve_all_stages_kernel(uint64_t* hashes, solver_heap* heaps, eq
 	__syncthreads();
     num_sols[idx] = solve_stage3(thread_heap, thread_solutions);
 }
-
-// CPU
-// int equix_solver_solve(uint64_t* hashes, solver_heap* heap, equix_solution output[EQUIX_MAX_SOLS]);
-// uint32_t equix_solver_solve(
-// 	uint64_t* hashes,
-// 	solver_heap* heap,
-// 	equix_solution output[EQUIX_MAX_SOLS])
-// {
-// 	solve_stage0(hashes, heap);
-// 	solve_stage1(heap);
-// 	solve_stage2(heap);
-// 	return solve_stage3(heap, output);
-// }
