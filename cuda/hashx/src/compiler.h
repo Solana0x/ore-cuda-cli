@@ -17,7 +17,7 @@ HASHX_PRIVATE void hashx_compiler_destroy(hashx_ctx* compiler);
 
 #define ALIGN_SIZE(pos, align) ((((pos) - 1) / (align) + 1) * (align))
 
-#define COMP_PAGE_SIZE 4096
+#define COMP_PAGE_SIZE 32768
 #define COMP_RESERVE_SIZE 1024
 #define COMP_AVG_INSTR_SIZE 5
 #define COMP_CODE_SIZE                                                        \
