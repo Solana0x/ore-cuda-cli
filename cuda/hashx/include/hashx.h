@@ -37,6 +37,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <cuda_runtime.h>  // Ensure CUDA is included
 
 /*
  * Input of the hash function.
@@ -87,7 +88,7 @@ extern "C" {
  * @return pointer to a new HashX instance. Returns NULL on memory allocation 
  *         failure and HASHX_NOTSUPP if the requested type is not supported.
 */
-HASHX_API hashx_ctx* hashx_alloc(hashx_type type);
+__host__ HASHX_API hashx_ctx* hashx_alloc(hashx_type type);
 
 /*
  * Create a new HashX function from seed.
@@ -98,7 +99,7 @@ HASHX_API hashx_ctx* hashx_alloc(hashx_type type);
  *
  * @return 1 on success, 0 on failure.                                         
 */
-HASHX_API int hashx_make(hashx_ctx* ctx, const void* seed, size_t size);
+__host__ HASHX_API int hashx_make(hashx_ctx* ctx, const void* seed, size_t size);
 
 /*
  * Execute the HashX function.
@@ -108,7 +109,7 @@ HASHX_API int hashx_make(hashx_ctx* ctx, const void* seed, size_t size);
  * @param HASHX_INPUT is the input to be hashed (see definition above).
  * @param output is a pointer to the result buffer. HASHX_SIZE bytes will be
  *        written.
- s*/
+ */
 __device__ HASHX_API void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT, void* output);
 
 /*
@@ -116,7 +117,7 @@ __device__ HASHX_API void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT, void* ou
  *
  * @param ctx is pointer to a HashX instance.
 */
-HASHX_API void hashx_free(hashx_ctx* ctx);
+__host__ HASHX_API void hashx_free(hashx_ctx* ctx);
 
 #ifdef __cplusplus
 }
