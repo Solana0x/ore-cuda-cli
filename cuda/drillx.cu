@@ -8,7 +8,7 @@
 #include "equix/src/solver_heap.h"
 #include "hashx/src/context.h"
 
-const int BATCH_SIZE = 8196; 
+const int BATCH_SIZE = 4096; 
 const int NUM_HASHING_ROUNDS = 1; 
 
 #define CUDA_CHECK(call) \
