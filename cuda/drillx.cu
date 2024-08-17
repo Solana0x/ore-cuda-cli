@@ -77,7 +77,7 @@ __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num
 
 extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols, int num_sets) {
     // Increase the CUDA heap size to handle larger allocations
-    size_t heapSize = 1024 * 1024 * 1024; // 1 GB
+    size_t heapSize = 1024 * 1024 * 1024 * 24; // 1 GB
     CUDA_CHECK(cudaDeviceSetLimit(cudaLimitMallocHeapSize, heapSize));
 
     uint64_t *d_hashes;
