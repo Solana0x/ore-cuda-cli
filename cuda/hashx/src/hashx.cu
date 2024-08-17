@@ -2,7 +2,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include <hashx.h>
+#include <../include/hashx.h>
 #include "blake2.h"
 #include "hashx_endian.h"
 #include "program.h"
@@ -10,18 +10,21 @@
 #include "compiler.h"
 
 #if HASHX_SIZE > 32
-#error HASHX_SIZE cannot be more than 32
+#error "HASHX_SIZE cannot be greater than 32"
 #endif
 
 #ifndef HASHX_BLOCK_MODE
-#define HASHX_INPUT_ARGS const uint8_t* input
+#define HASHX_INPUT_ARGS input
 #else
-#define HASHX_INPUT_ARGS const uint8_t* input, size_t size
+#define HASHX_INPUT_ARGS input, size
 #endif
 
-static int initialize_program(hashx_ctx* ctx, hashx_program* program, siphash_state keys[2]) {
+// Function to initialize the program context
+static bool initialize_program(hashx_ctx* ctx, hashx_program* program,
+                                siphash_state keys[2]) {
+
     if (!hashx_program_generate(&keys[0], program)) {
-        return 0;
+        return false;
     }
 #ifndef HASHX_BLOCK_MODE
     memcpy(&ctx->keys, &keys[1], 32);
@@ -31,17 +34,20 @@ static int initialize_program(hashx_ctx* ctx, hashx_program* program, siphash_st
 #ifndef NDEBUG
     ctx->has_program = true;
 #endif
-    return 1;
+    return true;
 }
 
+// Function to create a hash context
 int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
     assert(ctx != NULL && ctx != HASHX_NOTSUPP);
-    assert(seed != NULL || size == 0);	
+    assert(seed != NULL || size == 0);
+
     siphash_state keys[2];
     blake2b_state hash_state;
     hashx_blake2b_init_param(&hash_state, &hashx_blake2_params);
     hashx_blake2b_update(&hash_state, seed, size);
     hashx_blake2b_final(&hash_state, &keys, sizeof(keys));
+
     if (ctx->type & HASHX_COMPILED) {
         hashx_program program;
         if (!initialize_program(ctx, &program, keys)) {
@@ -53,17 +59,22 @@ int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
     return initialize_program(ctx, ctx->program, keys);
 }
 
-// Ensure single definition with C++ linkage
-__device__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output) {
+// Kernel function to be executed on the GPU
+__global__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT, void* output) {
     assert(ctx != NULL && ctx != HASHX_NOTSUPP);
     assert(output != NULL);
     assert(ctx->has_program);
+
+    // Thread ID calculation for parallel processing
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
     uint64_t r[8];
 
 #ifndef HASHX_BLOCK_MODE
-    hashx_siphash24_ctr_state512(&ctx->keys, *reinterpret_cast<const uint64_t*>(input), r);
+    // Calculate intermediate hash values using SipHash
+    hashx_siphash24_ctr_state512(&ctx->keys, input + tid * sizeof(uint64_t), r);
 #else
-    hashx_blake2b_4r(&ctx->params, input, size, r);
+    // Calculate intermediate hash values using Blake2b
+    hashx_blake2b_4r(&ctx->params, input + tid * sizeof(uint64_t) * 4, size, r);
 #endif
 
     if (ctx->type & HASHX_COMPILED) {
