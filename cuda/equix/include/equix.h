@@ -1,100 +1,145 @@
-/* 
- * Copyright (c) 2020 tevador <tevador@gmail.com>
- * See LICENSE for licensing information 
- */
+/* Copyright (c) 2020 tevador <tevador@gmail.com> */
+/* See LICENSE for licensing information */
 
 #ifndef EQUIX_H
 #define EQUIX_H
 
 #include <stdint.h>
 #include <stddef.h>
-#include <stdlib.h>  // For dynamic memory allocation
 
-/* Maximum number of solutions returned by the solver */
-#define EQUIX_MAX_SOLS 16
+/*
+ * The solver will return at most this many solutions.
+ */
+#define EQUIX_MAX_SOLS 32
 
-/* Number of indices */
-#define EQUIX_NUM_IDX 32
+/*
+ * The number of indices.
+ */
+#define EQUIX_NUM_IDX 8
 
-/* 16-bit index type */
+/*
+ * 16-bit index.
+ */
 typedef uint16_t equix_idx;
 
-/* Solution structure */
+/*
+ *  The solution.
+ */
 typedef struct equix_solution {
-    equix_idx* idx;  // Dynamically allocated array
+    equix_idx idx[EQUIX_NUM_IDX];
 } equix_solution;
 
-/* Opaque structure for Equi-X context */
+/*
+ * Solution verification results
+ */
+typedef enum equix_result {
+    EQUIX_OK,               /* Solution is valid */
+    EQUIX_CHALLENGE,        /* The challenge is invalid (the internal hash
+                               function doesn't pass validation). */
+    EQUIX_ORDER,            /* Indices are not in the correct order. */
+    EQUIX_PARTIAL_SUM,      /* The partial sums of the hash values don't
+                               have the required number of trailing zeroes. */
+    EQUIX_FINAL_SUM         /* The hash values don't sum to zero. */
+} equix_result;
+
+/*
+ * Opaque struct that holds the Equi-X context
+ */
 typedef struct equix_ctx equix_ctx;
 
-/* Context creation flags */
+/*
+ * Flags for context creation
+*/
 typedef enum equix_ctx_flags {
     EQUIX_CTX_VERIFY = 0,       /* Context for verification */
     EQUIX_CTX_SOLVE = 1,        /* Context for solving */
     EQUIX_CTX_COMPILE = 2,      /* Compile internal hash function */
+    EQUIX_CTX_HUGEPAGES = 4,    /* Allocate solver memory using HugePages */
 } equix_ctx_flags;
 
-/* Sentinel value indicating unsupported type */
+/* Sentinel value used to indicate unsupported type */
 #define EQUIX_NOTSUPP ((equix_ctx*)-1)
 
-/* Shared/static library definitions */
-#if defined(EQUIX_SHARED)
-    #define EQUIX_API __attribute__ ((visibility ("default")))
-#else
-    #define EQUIX_API
+#if defined(_WIN32) || defined(__CYGWIN__)
+#define EQUIX_WIN
 #endif
 
-#define EQUIX_PRIVATE __attribute__ ((visibility ("hidden")))
+/* Shared/static library definitions */
+#ifdef EQUIX_WIN
+    #ifdef EQUIX_SHARED
+        #define EQUIX_API __declspec(dllexport)
+    #elif !defined(EQUIX_STATIC)
+        #define EQUIX_API __declspec(dllimport)
+    #else
+        #define EQUIX_API
+    #endif
+    #define EQUIX_PRIVATE
+#else
+    #ifdef EQUIX_SHARED
+        #define EQUIX_API __attribute__ ((visibility ("default")))
+    #else
+        #define EQUIX_API __attribute__ ((visibility ("hidden")))
+    #endif
+    #define EQUIX_PRIVATE __attribute__ ((visibility ("hidden")))
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Allocate an Equi-X context */
+/*
+ * Allocate an Equi-X context.
+ *
+ * @param flags is the type of context to be created
+ *
+ * @return pointer to a newly created context. Returns NULL on memory
+ *         allocation failure and EQUIX_NOTSUPP if the requested type
+ *         is not supported.
+ */
 EQUIX_API equix_ctx* equix_alloc(equix_ctx_flags flags);
 
-/* Free an Equi-X context */
+/*
+* Free an Equi-X a context.
+*
+* @param ctx is a pointer to the context
+*/
 EQUIX_API void equix_free(equix_ctx* ctx);
 
 /*
- * Initialize the solution structure.
- * This function allocates memory for the indices in the solution.
+ * Find Equi-X solutions for the given challenge.
  *
- * @param solution is a pointer to an equix_solution structure.
+ * @param ctx             pointer to an Equi-X context
+ * @param challenge       pointer to the challenge data
+ * @param challenge_size  size of the challenge
+ * @param output          pointer to the output array where solutions will be
+ *                        stored
+ *
+ * @return the number of solutions found
  */
-EQUIX_API void equix_solution_init(equix_solution* solution);
+EQUIX_API int equix_solve(
+    equix_ctx* ctx,
+    const void* challenge,
+    size_t challenge_size,
+    equix_solution output[EQUIX_MAX_SOLS]);
 
 /*
- * Free the memory allocated for the solution structure.
+ * Verify an Equi-X solution.
  *
- * @param solution is a pointer to an equix_solution structure.
- */
-EQUIX_API void equix_solution_free(equix_solution* solution);
-
-/*
- * Solve the problem using all available CPU cores.
+ * @param ctx             pointer to an Equi-X context
+ * @param challenge       pointer to the challenge data
+ * @param challenge_size  size of the challenge
+ * @param solution        pointer to the solution to be verified
  *
- * @param ctx is a pointer to the context.
- * @param solutions is a pointer to an array of equix_solution structures.
- * @param max_sols is the maximum number of solutions to find (should not exceed EQUIX_MAX_SOLS).
- *
- * @return the number of solutions found.
- */
-EQUIX_API int equix_solve_parallel_cpu(equix_ctx* ctx, equix_solution* solutions, int max_sols);
-
-/*
- * Solve the problem using GPU acceleration.
- *
- * @param ctx is a pointer to the context.
- * @param solutions is a pointer to an array of equix_solution structures.
- * @param max_sols is the maximum number of solutions to find (should not exceed EQUIX_MAX_SOLS).
- *
- * @return the number of solutions found.
- */
-EQUIX_API int equix_solve_parallel_gpu(equix_ctx* ctx, equix_solution* solutions, int max_sols);
+ * @return verification result
+*/
+EQUIX_API equix_result equix_verify(
+    equix_ctx* ctx,
+    const void* challenge,
+    size_t challenge_size,
+    const equix_solution* solution);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* EQUIX_H */
+#endif
