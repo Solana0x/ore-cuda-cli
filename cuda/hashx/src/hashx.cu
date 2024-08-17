@@ -53,14 +53,14 @@ int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
     return initialize_program(ctx, ctx->program, keys);
 }
 
-__device__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output) {
+// Ensure visibility across translation units
+extern "C" __device__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output) {
     assert(ctx != NULL && ctx != HASHX_NOTSUPP);
     assert(output != NULL);
     assert(ctx->has_program);
     uint64_t r[8];
 
 #ifndef HASHX_BLOCK_MODE
-    // Correcting the type of the input argument by casting to uint64_t.
     hashx_siphash24_ctr_state512(&ctx->keys, *reinterpret_cast<const uint64_t*>(input), r);
 #else
     hashx_blake2b_4r(&ctx->params, input, size, r);
