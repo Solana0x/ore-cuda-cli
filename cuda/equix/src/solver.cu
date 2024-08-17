@@ -1,6 +1,3 @@
-/* Copyright (c) 2020 tevador <tevador@gmail.com> */
-/* See LICENSE for licensing information */
-
 #include <cuda_runtime.h>
 #include "solver.h"
 #include "context.h"
