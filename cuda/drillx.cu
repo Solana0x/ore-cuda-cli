@@ -52,16 +52,23 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
+    // Perform the hashing on the GPU
     do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool->ctxs, memPool->hash_space, NUM_HASHING_ROUNDS);
     CUDA_CHECK(cudaGetLastError());
 
+    // Synchronize the stream to ensure the kernel execution completes
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
+    // Ensure hash results are transferred from GPU to CPU
     for (int i = 0; i < BATCH_SIZE; i++) {
-        CUDA_CHECK(cudaMemcpyAsync(out + i * INDEX_SPACE, memPool->hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+        // Copy data from the GPU to the CPU
+        CUDA_CHECK(cudaMemcpy(out + i * INDEX_SPACE, memPool->hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
     }
 
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    // Synchronize after copying the data
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    // Destroy the stream
     CUDA_CHECK(cudaStreamDestroy(stream));
 
     // Clean up memory pool
