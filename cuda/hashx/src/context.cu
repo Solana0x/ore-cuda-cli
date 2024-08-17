@@ -55,10 +55,12 @@ hashx_ctx* hashx_alloc(hashx_type type) {
 // Free hashx context
 void hashx_free(hashx_ctx* ctx) {
     if (ctx != NULL && ctx != HASHX_NOTSUPP) {
-        if (ctx->type & HASHX_COMPILED) {
-            hashx_compiler_destroy(ctx);
-        } else if (ctx->program != NULL) {
-            cudaFree(ctx->program);
+        if (ctx->code != NULL) {
+            if (ctx->type & HASHX_COMPILED) {
+                hashx_compiler_destroy(ctx);
+            } else if (ctx->program != NULL) {
+                cudaFree(ctx->program);
+            }
         }
         cudaFree(ctx);
     }
