@@ -34,8 +34,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     MemoryPool* memPool;
     CUDA_CHECK(cudaMallocManaged(&memPool, sizeof(MemoryPool)));
 
-    // Initialize the MemoryPool object directly
-    new(memPool) MemoryPool(BATCH_SIZE); 
+    // Initialize the MemoryPool object using a regular constructor
+    memPool->MemoryPool::MemoryPool(BATCH_SIZE);
 
     uint8_t seed[40];
     memcpy(seed, challenge, 32);
