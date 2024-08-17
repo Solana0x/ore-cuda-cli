@@ -5,7 +5,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include <hashx.h>
+#include <../include/hashx.h>
 #include "blake2.h"
 #include "hashx_endian.h"
 #include "program.h"
