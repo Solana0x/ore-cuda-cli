@@ -13,7 +13,7 @@
 #define EQUIX_MAX_SOLS 16
 
 /* Number of indices */
-#define EQUIX_NUM_IDX 8
+#define EQUIX_NUM_IDX 32
 
 /* 16-bit index type */
 typedef uint16_t equix_idx;
