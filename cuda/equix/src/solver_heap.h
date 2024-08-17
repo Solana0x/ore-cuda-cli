@@ -5,7 +5,7 @@
 #define SOLVER_HEAP_H
 
 #include <stdint.h>
-#include <equix.h>
+#include <../include/equix.h>
 
 #define INDEX_SPACE (UINT32_C(1) << 16)
 #define NUM_COARSE_BUCKETS 256
