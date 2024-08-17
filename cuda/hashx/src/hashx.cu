@@ -18,8 +18,8 @@
 #define HASHX_INPUT_ARGS const uint8_t* input, size_t size
 #endif
 
-// Initialize the program and set the appropriate keys
-static __device__ int initialize_program(hashx_ctx* ctx, hashx_program* program, siphash_state keys[2]) {
+// Host function to initialize the program and set the appropriate keys
+static int initialize_program(hashx_ctx* ctx, hashx_program* program, siphash_state keys[2]) {
     if (!hashx_program_generate(&keys[0], program)) {
         return 0;
     }
@@ -37,35 +37,29 @@ static __device__ int initialize_program(hashx_ctx* ctx, hashx_program* program,
     return 1;
 }
 
-__global__ void hashx_make_kernel(hashx_ctx* ctx, const void* seed, size_t size, siphash_state* keys) {
-    blake2b_state hash_state;
-
-    // Hash the seed to produce the keys
-    hashx_blake2b_init_param(&hash_state, &hashx_blake2_params);
-    hashx_blake2b_update(&hash_state, seed, size);
-    hashx_blake2b_final(&hash_state, keys, sizeof(siphash_state) * 2);
-
-    if (ctx->type & HASHX_COMPILED) {
-        hashx_program program;
-        if (!initialize_program(ctx, &program, keys)) {
-            return;
-        }
-        hashx_compile(&program, ctx->code);
-    } else {
-        initialize_program(ctx, ctx->program, keys);
-    }
-}
-
+// Host function to perform the Blake2b hashing and generate keys
 int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
     assert(ctx != NULL && ctx != HASHX_NOTSUPP);
     assert(seed != NULL || size == 0);
 
     siphash_state keys[2];
+    blake2b_state hash_state;
 
-    hashx_make_kernel<<<1, 1>>>(ctx, seed, size, keys);
-    cudaDeviceSynchronize();
+    // Perform the hashing on the host
+    hashx_blake2b_init_param(&hash_state, &hashx_blake2_params);
+    hashx_blake2b_update(&hash_state, seed, size);
+    hashx_blake2b_final(&hash_state, &keys, sizeof(keys));
 
-    return 1;
+    if (ctx->type & HASHX_COMPILED) {
+        hashx_program program;
+        if (!initialize_program(ctx, &program, keys)) {
+            return 0;
+        }
+        hashx_compile(&program, ctx->code);
+        return 1;
+    } else {
+        return initialize_program(ctx, ctx->program, keys);
+    }
 }
 
 __global__ void hashx_exec_kernel(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output, size_t num_hashes) {
