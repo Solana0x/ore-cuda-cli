@@ -139,3 +139,4 @@ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output, size_t num
     hashx_exec_kernel<<<num_blocks, threads_per_block, shared_memory_size>>>(ctx, HASHX_INPUT_ARGS, output, num_hashes);
     cudaDeviceSynchronize();
 }
+
