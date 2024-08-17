@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <hashx.h>
+#include <../include/hashx.h>
 #include "program.h"
 
 #define HASHX_COMPILER 0
