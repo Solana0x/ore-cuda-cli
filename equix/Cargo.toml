@@ -1,61 +1,40 @@
-[dependencies.arrayvec]
-version = "0.7.4"
+[package]
+name = "equix"
+version = "0.1.6"
+authors = ["The Tor Project, Inc.", "Micah Elizabeth Scott <beth@torproject.org>"]
+edition = "2021"
+rust-version = "1.70"
+homepage = "https://gitlab.torproject.org/tpo/core/arti/-/wikis/home"
+description = "Asymmetric function for client puzzle protocols"
+keywords = ["cryptography"]
+categories = ["cryptography"]
+repository = "https://gitlab.torproject.org/tpo/core/arti.git/"
 
-[dependencies.hashx]
-default-features = false
-version = "0.1.3"
-
-[dependencies.num-traits]
-version = "0.2.15"
-
-[dependencies.thiserror]
-version = "1.0.40"
-
-[dependencies.visibility]
-version = "0.1.0"
-
-[dev-dependencies.permutohedron]
-version = "0.2.4"
+# This crate is a new implementation of algorithms developed and implemented
+# by tevador here: https://github.com/tevador/equix/. The original is
+# Copyright (c) 2020 tevador <tevador@gmail.com>
+# and licensed under the terms of the LGPL version 3.0.
+#
+# If tevador is okay with it, we intend to re-license this crate as
+# MIT OR Apache-2.0. Thus, do not contribute to this crate unless you
+# are okay with these licensing terms.
+license = "LGPL-3.0-only"
 
 [features]
-__is_experimental = []
-bucket-array = ["__is_experimental"]
-compiler = ["hashx/compiler"]
 default = ["compiler"]
-experimental = ["bucket-array"]
 full = ["compiler", "hashx/full"]
+compiler = ["hashx/compiler"]
+experimental = ["bucket-array"]
+# For fuzzing only: expose the unstable 'bucket-array' API.
+bucket-array = ["__is_experimental"]
+__is_experimental = []
 
-[lib]
-name = "equix"
-path = "src/lib.rs"
+[dependencies]
+arrayvec = "0.7.4"
+hashx = { version = "0.1.3", default-features = false }
+num-traits = "0.2.15"
+thiserror = "1.0.40"
+visibility = "0.1.0"
 
-[package]
-authors = ["The Tor Project, Inc.", "Micah Elizabeth Scott <beth@torproject.org>"]
-autobenches = false
-autobins = false
-autoexamples = false
-autotests = false
-build = false
-categories = ["cryptography"]
-description = "Asymmetric function for client puzzle protocols"
-edition = "2021"
-homepage = "https://gitlab.torproject.org/tpo/core/arti/-/wikis/home"
-keywords = ["cryptography"]
-license = "LGPL-3.0-only"
-name = "equix"
-readme = "README.md"
-repository = "https://gitlab.torproject.org/tpo/core/arti.git/"
-rust-version = "1.70"
-version = "0.1.6"
-
-[[test]]
-name = "equix_hash"
-path = "tests/equix_hash.rs"
-
-[[test]]
-name = "equix_verify"
-path = "tests/equix_verify.rs"
-
-[[test]]
-name = "tor_equix_vectors"
-path = "tests/tor_equix_vectors.rs"
+[dev-dependencies]
+permutohedron = "0.2.4"
