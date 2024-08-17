@@ -5,6 +5,7 @@
 #define CONTEXT_H
 
 #include <../include/equix.h>
+#include <../../hashx/include/hashx.h>
 
 typedef struct solver_heap solver_heap;
 
