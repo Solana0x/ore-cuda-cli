@@ -5,7 +5,7 @@
 #define SIPHASH_GENERATOR_H
 
 #include <stdint.h>
-#include <hashx.h>
+#include <../include/hashx.h>
 #include "siphash.h"
 
 typedef struct siphash_rng {
