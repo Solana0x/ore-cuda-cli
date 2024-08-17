@@ -41,11 +41,24 @@ __device__ FORCE_INLINE void blake2b_init0(blake2b_state* S) {
     memcpy(S->h, blake2b_IV, sizeof(S->h));
 }
 
+#define G(r, i, a, b, c, d, m)                                               \
+    do {                                                                     \
+        a = a + b + m[i];                                                    \
+        d = rotr64(d ^ a, 32);                                               \
+        c = c + d;                                                           \
+        b = rotr64(b ^ c, 24);                                               \
+        a = a + b + m[(i + 1) % 16];                                         \
+        d = rotr64(d ^ a, 16);                                               \
+        c = c + d;                                                           \
+        b = rotr64(b ^ c, 63);                                               \
+    } while (0)
+
 __global__ void blake2b_compress_kernel(blake2b_state* S, const uint8_t* block, int rounds) {
     __shared__ uint64_t m[16];
     __shared__ uint64_t v[16];
 
     unsigned int i = threadIdx.x;
+
     if (i < 16) {
         m[i] = load64(block + i * sizeof(m[i]));
     }
@@ -53,9 +66,11 @@ __global__ void blake2b_compress_kernel(blake2b_state* S, const uint8_t* block, 
     if (i < 8) {
         v[i] = S->h[i];
     }
+
     if (i < 16) {
         v[8 + i] = (i < 8) ? blake2b_IV[i] : (blake2b_IV[i - 8] ^ S->t[i - 8]);
     }
+    
     if (i == 15) {
         v[14] ^= S->f[0];
         v[15] ^= S->f[1];
@@ -64,12 +79,8 @@ __global__ void blake2b_compress_kernel(blake2b_state* S, const uint8_t* block, 
     __syncthreads();
 
     for (int r = 0; r < rounds; r++) {
-        // Apply the G function in a thread-parallel manner
-        if (i < 16) {
-            if (i % 4 == 0) v[i % 4] += v[(i + 1) % 4] + m[BLAKE2_SIGMA_ ## r ## _ ## (i % 16)];
-            if (i % 4 == 3) v[(i + 3) % 4] = rotr64(v[(i + 3) % 4] ^ v[i % 4], 32);
-            if (i % 4 == 2) v[(i + 2) % 4] += v[(i + 3) % 4];
-            if (i % 4 == 1) v[(i + 1) % 4] = rotr64(v[(i + 1) % 4] ^ v[(i + 2) % 4], 24);
+        if (i < 4) {
+            G(r, i * 4, v[i], v[i + 4], v[i + 8], v[i + 12], m);
         }
         __syncthreads();
     }
@@ -77,10 +88,6 @@ __global__ void blake2b_compress_kernel(blake2b_state* S, const uint8_t* block, 
     if (i < 8) {
         S->h[i] = S->h[i] ^ v[i] ^ v[i + 8];
     }
-}
-
-__global__ void blake2b_compress_4r_kernel(blake2b_state* S, const uint8_t* block) {
-    blake2b_compress_kernel(S, block, 4);
 }
 
 extern "C" int hashx_blake2b_update(blake2b_state* S, const void* in, size_t inlen) {
@@ -105,14 +112,14 @@ extern "C" int hashx_blake2b_update(blake2b_state* S, const void* in, size_t inl
         size_t left = S->buflen;
         size_t fill = BLAKE2B_BLOCKBYTES - left;
         memcpy(&S->buf[left], pin, fill);
-        blake2b_increment_counter(S, BLAKE2B_BLOCKBYTES);
+        blake2b_increment_counter<<<1, 1>>>(S, BLAKE2B_BLOCKBYTES);
         blake2b_compress_kernel<<<1, 16>>>(S, S->buf, 12);
         S->buflen = 0;
         inlen -= fill;
         pin += fill;
         /* Avoid buffer copies when possible */
         while (inlen > BLAKE2B_BLOCKBYTES) {
-            blake2b_increment_counter(S, BLAKE2B_BLOCKBYTES);
+            blake2b_increment_counter<<<1, 1>>>(S, BLAKE2B_BLOCKBYTES);
             blake2b_compress_kernel<<<1, 16>>>(S, pin, 12);
             inlen -= BLAKE2B_BLOCKBYTES;
             pin += BLAKE2B_BLOCKBYTES;
@@ -136,8 +143,8 @@ extern "C" int hashx_blake2b_final(blake2b_state* S, void* out, size_t outlen) {
         return -1;
     }
 
-    blake2b_increment_counter(S, S->buflen);
-    blake2b_set_lastblock(S);
+    blake2b_increment_counter<<<1, 1>>>(S, S->buflen);
+    blake2b_set_lastblock<<<1, 1>>>(S);
     memset(&S->buf[S->buflen], 0, BLAKE2B_BLOCKBYTES - S->buflen); /* Padding */
     blake2b_compress_kernel<<<1, 16>>>(S, S->buf, 12);
 
@@ -153,7 +160,7 @@ extern "C" void hashx_blake2b_4r(const blake2b_param* params, const void* in,
 	blake2b_state state;
 	const uint8_t* p = (const uint8_t*)params;
 
-	blake2b_init0(&state);
+	blake2b_init0<<<1, 1>>>(&state);
 	/* IV XOR Parameter Block */
 	for (unsigned i = 0; i < 8; ++i) {
 		state.h[i] ^= load64(&p[i * sizeof(state.h[i])]);
@@ -162,16 +169,16 @@ extern "C" void hashx_blake2b_4r(const blake2b_param* params, const void* in,
 	const uint8_t* pin = (const uint8_t*)in;
 
 	while (inlen > BLAKE2B_BLOCKBYTES) {
-		blake2b_increment_counter(&state, BLAKE2B_BLOCKBYTES);
-		blake2b_compress_4r_kernel<<<1, 16>>>(&state, pin);
+		blake2b_increment_counter<<<1, 1>>>(&state, BLAKE2B_BLOCKBYTES);
+		blake2b_compress_kernel<<<1, 16>>>(&state, pin, 4);
 		inlen -= BLAKE2B_BLOCKBYTES;
 		pin += BLAKE2B_BLOCKBYTES;
 	}
 
 	memcpy(state.buf, pin, inlen);
-	blake2b_increment_counter(&state, inlen);
-	blake2b_set_lastblock(&state);
-	blake2b_compress_4r_kernel<<<1, 16>>>(&state, state.buf);
+	blake2b_increment_counter<<<1, 1>>>(&state, inlen);
+	blake2b_set_lastblock<<<1, 1>>>(&state);
+	blake2b_compress_kernel<<<1, 16>>>(&state, state.buf, 4);
 
 	cudaMemcpy(out, state.h, sizeof(state.h), cudaMemcpyDeviceToHost);
 }
