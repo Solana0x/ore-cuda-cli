@@ -7,9 +7,11 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdint.h>
 
-#define CUDA_CHECK_ERROR(call) \
-    { cudaError_t err = call; if(err != cudaSuccess) { printf("CUDA Error: %s:%d, ", __FILE__, __LINE__); printf("code: %d, reason: %s\n", err, cudaGetErrorString(err)); exit(1); } }
+#ifdef _MSC_VER
+#pragma warning (disable : 4146) /* unary minus applied to unsigned type */
+#endif
 
 #define CLEAR(x) memset(&x, 0, sizeof(x))
 #define MAKE_ITEM(bucket, left, right) ((left) << 17 | (right) << 8 | (bucket))
@@ -44,13 +46,37 @@ typedef stage1_idx_item s1_idx;
 typedef stage2_idx_item s2_idx;
 typedef stage3_idx_item s3_idx;
 
-__device__ uint64_t hash_value_device(hashx_ctx* hash_func, equix_idx index) {
+__device__ FORCE_INLINE uint64_t hash_value(hashx_ctx* hash_func, equix_idx index) {
     char hash[HASHX_SIZE];
     hashx_exec(hash_func, index, hash);
     return load64(hash);
 }
 
-__device__ void build_solution_stage1_device(equix_idx* output, solver_heap* heap, s2_idx root) {
+__device__ unsigned int atomicAdd_u16(uint16_t *address, uint16_t val) {
+    unsigned int* base_address = (unsigned int*)((char*)address - ((size_t)address & 2));
+    unsigned int old, assumed;
+    old = *base_address;
+    do {
+        assumed = old;
+        old = atomicCAS(base_address, assumed,
+                        (assumed & 0xFFFF0000) | (((assumed & 0xFFFF) + val) & 0xFFFF));
+    } while (assumed != old);
+    return old;
+}
+
+__device__ unsigned int atomicSub_u16(uint16_t *address, uint16_t val) {
+    unsigned int* base_address = (unsigned int*)((char*)address - ((size_t)address & 2));
+    unsigned int old, assumed;
+    old = *base_address;
+    do {
+        assumed = old;
+        old = atomicCAS(base_address, assumed,
+                        (assumed & 0xFFFF0000) | (((assumed & 0xFFFF) - val) & 0xFFFF));
+    } while (assumed != old);
+    return old;
+}
+
+__device__ void build_solution_stage1(equix_idx* output, solver_heap* heap, s2_idx root) {
     u32 bucket = ITEM_BUCKET(root);
     u32 bucket_inv = INVERT_BUCKET(bucket);
     u32 left_parent_idx = ITEM_LEFT_IDX(root);
@@ -64,24 +90,24 @@ __device__ void build_solution_stage1_device(equix_idx* output, solver_heap* hea
     }
 }
 
-__device__ void build_solution_stage2_device(equix_idx* output, solver_heap* heap, s3_idx root) {
+__device__ void build_solution_stage2(equix_idx* output, solver_heap* heap, s3_idx root) {
     u32 bucket = ITEM_BUCKET(root);
     u32 bucket_inv = INVERT_BUCKET(bucket);
     u32 left_parent_idx = ITEM_LEFT_IDX(root);
     u32 right_parent_idx = ITEM_RIGHT_IDX(root);
     s2_idx left_parent = STAGE2_IDX(bucket, left_parent_idx);
     s2_idx right_parent = STAGE2_IDX(bucket_inv, right_parent_idx);
-    build_solution_stage1_device(&output[0], heap, left_parent);
-    build_solution_stage1_device(&output[2], heap, right_parent);
+    build_solution_stage1(&output[0], heap, left_parent);
+    build_solution_stage1(&output[2], heap, right_parent);
     if (!tree_cmp2(&output[0], &output[2])) {
         SWAP_IDX(output[0], output[2]);
         SWAP_IDX(output[1], output[3]);
     }
 }
 
-__device__ void build_solution_device(equix_solution* solution, solver_heap* heap, s3_idx left, s3_idx right) {
-    build_solution_stage2_device(&solution->idx[0], heap, left);
-    build_solution_stage2_device(&solution->idx[4], heap, right);
+__device__ void build_solution(equix_solution* solution, solver_heap* heap, s3_idx left, s3_idx right) {
+    build_solution_stage2(&solution->idx[0], heap, left);
+    build_solution_stage2(&solution->idx[4], heap, right);
     if (!tree_cmp4(&solution->idx[0], &solution->idx[4])) {
         SWAP_IDX(solution->idx[0], solution->idx[4]);
         SWAP_IDX(solution->idx[1], solution->idx[5]);
@@ -90,139 +116,201 @@ __device__ void build_solution_device(equix_solution* solution, solver_heap* hea
     }
 }
 
-__global__ void solve_stage0_kernel(hashx_ctx* hash_func, solver_heap* heap) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= INDEX_SPACE) return;
+__device__ void solve_stage0(uint64_t* hashes, solver_heap* heap) {
+    // Clearing counts to zero
+    memset(heap->stage1_indices.counts, 0, sizeof(heap->stage1_indices.counts));
 
-    uint64_t value = hash_value_device(hash_func, i);
-    u32 bucket_idx = value % NUM_COARSE_BUCKETS;
-    u32 item_idx = atomicAdd(&STAGE1_SIZE(bucket_idx), 1);
-    if (item_idx >= COARSE_BUCKET_ITEMS)
-        return;
-    STAGE1_IDX(bucket_idx, item_idx) = i;
-    STAGE1_DATA(bucket_idx, item_idx) = value / NUM_COARSE_BUCKETS; /* 52 bits */
-}
-
-__global__ void solve_stage1_kernel(solver_heap* heap) {
-    int bucket_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (bucket_idx >= BUCK_END) return;
-
-    u32 cpl_bucket = INVERT_BUCKET(bucket_idx);
-    u32 cpl_buck_size = STAGE1_SIZE(cpl_bucket);
-
-    for (u32 item_idx = 0; item_idx < cpl_buck_size; ++item_idx) {
-        stage1_data_item value = STAGE1_DATA(cpl_bucket, item_idx);
-        u32 fine_buck_idx = value % NUM_FINE_BUCKETS;
-        u32 fine_item_idx = atomicAdd(&SCRATCH_SIZE(fine_buck_idx), 1);
-        if (fine_item_idx >= FINE_BUCKET_ITEMS)
-            continue;
-        SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
-        if (cpl_bucket == bucket_idx) {
-            MAKE_PAIRS1
-        }
-    }
-
-    if (cpl_bucket != bucket_idx) {
-        u32 buck_size = STAGE1_SIZE(bucket_idx);
-        for (u32 item_idx = 0; item_idx < buck_size; ++item_idx) {
-            MAKE_PAIRS1
+    for (u32 i = 0; i < INDEX_SPACE; ++i) {
+        uint64_t value = hashes[i];
+        u32 bucket_idx = value % NUM_COARSE_BUCKETS;
+        u32 item_idx = atomicAdd(&STAGE1_SIZE(bucket_idx), 1);  // Atomic increment to avoid race conditions
+        if (item_idx < COARSE_BUCKET_ITEMS) {
+            STAGE1_IDX(bucket_idx, item_idx) = i;
+            STAGE1_DATA(bucket_idx, item_idx) = value / NUM_COARSE_BUCKETS; /* 52 bits */
         }
     }
 }
 
-__global__ void solve_stage2_kernel(solver_heap* heap) {
-    int bucket_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (bucket_idx >= BUCK_END) return;
+__device__ void hash_stage0i(hashx_ctx* hash_func, uint64_t* out, uint32_t i) {
+    uint64_t hash = hash_value(hash_func, i);
+    out[i] = hash;
+}
 
-    u32 cpl_bucket = INVERT_BUCKET(bucket_idx);
-    u32 cpl_buck_size = STAGE2_SIZE(cpl_bucket);
+#define MAKE_PAIRS1                                                           \
+    stage1_data_item value = STAGE1_DATA(bucket_idx, item_idx) + CARRY;       \
+    u32 fine_buck_idx = value % NUM_FINE_BUCKETS;                             \
+    u32 fine_cpl_bucket = INVERT_SCRATCH(fine_buck_idx);                      \
+    u32 fine_cpl_size = SCRATCH_SIZE(fine_cpl_bucket);                        \
+    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; ++fine_idx) {            \
+        u32 cpl_index = SCRATCH(fine_cpl_bucket, fine_idx);                   \
+        stage1_data_item cpl_value = STAGE1_DATA(cpl_bucket, cpl_index);      \
+        stage1_data_item sum = value + cpl_value;                             \
+        assert((sum % NUM_FINE_BUCKETS) == 0);                                \
+        sum /= NUM_FINE_BUCKETS; /* 45 bits */                                \
+        u32 s2_buck_id = sum % NUM_COARSE_BUCKETS;                            \
+        u32 s2_item_id = atomicAdd(&STAGE2_SIZE(s2_buck_id), 1);              \
+        if (s2_item_id < COARSE_BUCKET_ITEMS) {                               \
+            STAGE2_IDX(s2_buck_id, s2_item_id) =                              \
+                MAKE_ITEM(bucket_idx, item_idx, cpl_index);                   \
+            STAGE2_DATA(s2_buck_id, s2_item_id) =                             \
+                sum / NUM_COARSE_BUCKETS; /* 37 bits */                       \
+        }                                                                     \
+    }                                                                         \
 
-    for (u32 item_idx = 0; item_idx < cpl_buck_size; ++item_idx) {
-        stage2_data_item value = STAGE2_DATA(cpl_bucket, item_idx);
-        u32 fine_buck_idx = value % NUM_FINE_BUCKETS;
-        u32 fine_item_idx = atomicAdd(&SCRATCH_SIZE(fine_buck_idx), 1);
-        if (fine_item_idx >= FINE_BUCKET_ITEMS)
-            continue;
-        SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
-        if (cpl_bucket == bucket_idx) {
-            MAKE_PAIRS2
+__device__ void solve_stage1(solver_heap* heap) {
+    // Clearing counts to zero
+    memset(heap->stage2_indices.counts, 0, sizeof(heap->stage2_indices.counts));
+
+    for (u32 bucket_idx = BUCK_START; bucket_idx < BUCK_END; ++bucket_idx) {
+        u32 cpl_bucket = INVERT_BUCKET(bucket_idx);
+        // Clearing scratchpad
+        memset(heap->scratch_ht.counts, 0, sizeof(heap->scratch_ht.counts));
+        u32 cpl_buck_size = STAGE1_SIZE(cpl_bucket);
+
+        for (u32 item_idx = 0; item_idx < cpl_buck_size; ++item_idx) {
+            stage1_data_item value = STAGE1_DATA(cpl_bucket, item_idx);
+            u32 fine_buck_idx = value % NUM_FINE_BUCKETS;
+            u32 fine_item_idx = atomicAdd(&SCRATCH_SIZE(fine_buck_idx), 1); // Atomic increment for scratch size
+            if (fine_item_idx < FINE_BUCKET_ITEMS) {
+                SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
+                if (cpl_bucket == bucket_idx) {
+                    MAKE_PAIRS1
+                }
+            }
         }
-    }
 
-    if (cpl_bucket != bucket_idx) {
-        u32 buck_size = STAGE2_SIZE(bucket_idx);
-        for (u32 item_idx = 0; item_idx < buck_size; ++item_idx) {
-            MAKE_PAIRS2
+        if (cpl_bucket != bucket_idx) {
+            u32 buck_size = STAGE1_SIZE(bucket_idx);
+            for (u32 item_idx = 0; item_idx < buck_size; ++item_idx) {
+                MAKE_PAIRS1
+            }
         }
     }
 }
 
-__global__ void solve_stage3_kernel(solver_heap* heap, equix_solution output[EQUIX_MAX_SOLS], int* sols_found) {
-    int bucket_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (bucket_idx >= BUCK_END) return;
+#define MAKE_PAIRS2                                                           \
+    stage2_data_item value = STAGE2_DATA(bucket_idx, item_idx) + CARRY;       \
+    u32 fine_buck_idx = value % NUM_FINE_BUCKETS;                             \
+    u32 fine_cpl_bucket = INVERT_SCRATCH(fine_buck_idx);                      \
+    u32 fine_cpl_size = SCRATCH_SIZE(fine_cpl_bucket);                        \
+    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; ++fine_idx) {            \
+        u32 cpl_index = SCRATCH(fine_cpl_bucket, fine_idx);                   \
+        stage2_data_item cpl_value = STAGE2_DATA(cpl_bucket, cpl_index);      \
+        stage2_data_item sum = value + cpl_value;                             \
+        assert((sum % NUM_FINE_BUCKETS) == 0);                                \
+        sum /= NUM_FINE_BUCKETS; /* 30 bits */                                \
+        u32 s3_buck_id = sum % NUM_COARSE_BUCKETS;                            \
+        u32 s3_item_id = atomicAdd(&STAGE3_SIZE(s3_buck_id), 1);              \
+        if (s3_item_id < COARSE_BUCKET_ITEMS) {                               \
+            STAGE3_IDX(s3_buck_id, s3_item_id) =                              \
+                MAKE_ITEM(bucket_idx, item_idx, cpl_index);                   \
+            STAGE3_DATA(s3_buck_id, s3_item_id) =                             \
+                sum / NUM_COARSE_BUCKETS; /* 22 bits */                       \
+        }                                                                     \
+    }                                                                         \
 
-    u32 cpl_bucket = INVERT_BUCKET(bucket_idx);
-    u32 cpl_buck_size = STAGE3_SIZE(cpl_bucket);
+__device__ void solve_stage2(solver_heap* heap) {
+    // Clearing counts to zero
+    memset(heap->stage3_indices.counts, 0, sizeof(heap->stage3_indices.counts));
 
-    for (u32 item_idx = 0; item_idx < cpl_buck_size; ++item_idx) {
-        stage3_data_item value = STAGE3_DATA(cpl_bucket, item_idx);
-        u32 fine_buck_idx = value % NUM_FINE_BUCKETS;
-        u32 fine_item_idx = atomicAdd(&SCRATCH_SIZE(fine_buck_idx), 1);
-        if (fine_item_idx >= FINE_BUCKET_ITEMS)
-            continue;
-        SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
-        if (cpl_bucket == bucket_idx) {
-            MAKE_PAIRS3
+    for (u32 bucket_idx = BUCK_START; bucket_idx < BUCK_END; ++bucket_idx) {
+        u32 cpl_bucket = INVERT_BUCKET(bucket_idx);
+        // Clearing scratchpad
+        memset(heap->scratch_ht.counts, 0, sizeof(heap->scratch_ht.counts));
+        u32 cpl_buck_size = STAGE2_SIZE(cpl_bucket);
+
+        for (u32 item_idx = 0; item_idx < cpl_buck_size; ++item_idx) {
+            stage2_data_item value = STAGE2_DATA(cpl_bucket, item_idx);
+            u32 fine_buck_idx = value % NUM_FINE_BUCKETS;
+            u32 fine_item_idx = atomicAdd(&SCRATCH_SIZE(fine_buck_idx), 1);
+            if (fine_item_idx < FINE_BUCKET_ITEMS) {
+                SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
+                if (cpl_bucket == bucket_idx) {
+                    MAKE_PAIRS2
+                }
+            }
         }
-    }
 
-    if (cpl_bucket != bucket_idx) {
-        u32 buck_size = STAGE3_SIZE(bucket_idx);
-        for (u32 item_idx = 0; item_idx < buck_size; ++item_idx) {
-            MAKE_PAIRS3
+        if (cpl_bucket != bucket_idx) {
+            u32 buck_size = STAGE2_SIZE(bucket_idx);
+            for (u32 item_idx = 0; item_idx < buck_size; ++item_idx) {
+                MAKE_PAIRS2
+            }
         }
     }
 }
 
-int equix_solver_solve_cuda(hashx_ctx* hash_func, solver_heap* heap, equix_solution output[EQUIX_MAX_SOLS]) {
-    // Allocate device memory and copy data
-    hashx_ctx* d_hash_func;
-    solver_heap* d_heap;
-    equix_solution* d_output;
-    int* d_sols_found;
+#define MAKE_PAIRS3                                                           \
+    stage3_data_item value = STAGE3_DATA(bucket_idx, item_idx) + CARRY;       \
+    u32 fine_buck_idx = value % NUM_FINE_BUCKETS;                             \
+    u32 fine_cpl_bucket = INVERT_SCRATCH(fine_buck_idx);                      \
+    u32 fine_cpl_size = SCRATCH_SIZE(fine_cpl_bucket);                        \
+    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; ++fine_idx) {            \
+        u32 cpl_index = SCRATCH(fine_cpl_bucket, fine_idx);                   \
+        stage3_data_item cpl_value = STAGE3_DATA(cpl_bucket, cpl_index);      \
+        stage3_data_item sum = value + cpl_value;                             \
+        assert((sum % NUM_FINE_BUCKETS) == 0);                                \
+        sum /= NUM_FINE_BUCKETS; /* 15 bits */                                \
+        if ((sum & EQUIX_STAGE1_MASK) == 0) {                                 \
+            /* we have a solution */                                          \
+            s3_idx item_left = STAGE3_IDX(bucket_idx, item_idx);              \
+            s3_idx item_right = STAGE3_IDX(cpl_bucket, cpl_index);            \
+            build_solution(&output[sols_found], heap, item_left, item_right); \
+            if (++(sols_found) >= EQUIX_MAX_SOLS) {                           \
+                return sols_found;                                            \
+            }                                                                 \
+        }                                                                     \
+    }                                                                         \
 
-    CUDA_CHECK_ERROR(cudaMalloc((void**)&d_hash_func, sizeof(hashx_ctx)));
-    CUDA_CHECK_ERROR(cudaMalloc((void**)&d_heap, sizeof(solver_heap)));
-    CUDA_CHECK_ERROR(cudaMalloc((void**)&d_output, sizeof(equix_solution) * EQUIX_MAX_SOLS));
-    CUDA_CHECK_ERROR(cudaMalloc((void**)&d_sols_found, sizeof(int)));
+__device__ uint32_t solve_stage3(solver_heap* heap, equix_solution output[EQUIX_MAX_SOLS]) {
+    uint32_t sols_found = 0;
 
-    CUDA_CHECK_ERROR(cudaMemcpy(d_hash_func, hash_func, sizeof(hashx_ctx), cudaMemcpyHostToDevice));
-    CUDA_CHECK_ERROR(cudaMemcpy(d_heap, heap, sizeof(solver_heap), cudaMemcpyHostToDevice));
-    CUDA_CHECK_ERROR(cudaMemset(d_sols_found, 0, sizeof(int)));
+    for (u32 bucket_idx = BUCK_START; bucket_idx < BUCK_END; ++bucket_idx) {
+        u32 cpl_bucket = -bucket_idx & (NUM_COARSE_BUCKETS - 1);
+        memset(heap->scratch_ht.counts, 0, sizeof(heap->scratch_ht.counts));
+        u32 cpl_buck_size = STAGE3_SIZE(cpl_bucket);
+        for (u32 item_idx = 0; item_idx < cpl_buck_size; ++item_idx) {
+            stage3_data_item value = STAGE3_DATA(cpl_bucket, item_idx);
+            u32 fine_buck_idx = value % NUM_FINE_BUCKETS;
+            u32 fine_item_idx = atomicAdd(&SCRATCH_SIZE(fine_buck_idx), 1);
+            if (fine_item_idx < FINE_BUCKET_ITEMS) {
+                SCRATCH(fine_buck_idx, fine_item_idx) = item_idx;
+                if (cpl_bucket == bucket_idx) {
+                    MAKE_PAIRS3
+                }
+            }
+        }
 
-    // Launch kernels
-    solve_stage0_kernel<<<(INDEX_SPACE + 255) / 256, 256>>>(d_hash_func, d_heap);
-    CUDA_CHECK_ERROR(cudaGetLastError());
-
-    solve_stage1_kernel<<<(BUCK_END + 255) / 256, 256>>>(d_heap);
-    CUDA_CHECK_ERROR(cudaGetLastError());
-
-    solve_stage2_kernel<<<(BUCK_END + 255) / 256, 256>>>(d_heap);
-    CUDA_CHECK_ERROR(cudaGetLastError());
-
-    solve_stage3_kernel<<<(BUCK_END + 255) / 256, 256>>>(d_heap, d_output, d_sols_found);
-    CUDA_CHECK_ERROR(cudaGetLastError());
-
-    // Copy results back to host
-    CUDA_CHECK_ERROR(cudaMemcpy(output, d_output, sizeof(equix_solution) * EQUIX_MAX_SOLS, cudaMemcpyDeviceToHost));
-    int sols_found;
-    CUDA_CHECK_ERROR(cudaMemcpy(&sols_found, d_sols_found, sizeof(int), cudaMemcpyDeviceToHost));
-
-    // Free device memory
-    CUDA_CHECK_ERROR(cudaFree(d_hash_func));
-    CUDA_CHECK_ERROR(cudaFree(d_heap));
-    CUDA_CHECK_ERROR(cudaFree(d_output));
-    CUDA_CHECK_ERROR(cudaFree(d_sols_found));
+        if (cpl_bucket != bucket_idx) {
+            u32 buck_size = STAGE3_SIZE(bucket_idx);
+            for (u32 item_idx = 0; item_idx < buck_size; ++item_idx) {
+                MAKE_PAIRS3
+            }
+        }
+    }
 
     return sols_found;
+}
+
+// GPU kernel
+__global__ void solve_all_stages_kernel(hashx_ctx* hash_func, uint64_t* hashes, solver_heap* heaps, equix_solution* solutions, uint32_t* num_sols) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    uint64_t* thread_hashes = hashes + (idx * INDEX_SPACE);
+    solver_heap* thread_heap = &heaps[idx];
+    equix_solution* thread_solutions = &solutions[idx * EQUIX_MAX_SOLS];
+
+    solve_stage0(thread_hashes, thread_heap);
+    __syncthreads();
+    solve_stage1(thread_heap);
+    __syncthreads();
+    solve_stage2(thread_heap);
+    __syncthreads();
+    num_sols[idx] = solve_stage3(thread_heap, thread_solutions);
+}
+
+// Host code to launch the kernel
+void launch_solver(hashx_ctx* hash_func, uint64_t* hashes, solver_heap* heap, equix_solution output[EQUIX_MAX_SOLS], uint32_t* num_sols, int num_threads) {
+    int num_blocks = (num_threads + 255) / 256;
+    solve_all_stages_kernel<<<num_blocks, 256>>>(hash_func, hashes, heap, output, num_sols);
 }
