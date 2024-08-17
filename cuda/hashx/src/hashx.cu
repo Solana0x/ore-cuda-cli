@@ -10,7 +10,7 @@
 #include "compiler.h"
 
 #if HASHX_SIZE > 32
-#error "HASHX_SIZE cannot be greater than 32"
+#error HASHX_SIZE cannot be more than 32
 #endif
 
 #ifndef HASHX_BLOCK_MODE
@@ -19,25 +19,64 @@
 #define HASHX_INPUT_ARGS input, size
 #endif
 
-// Function to initialize the program context
-static bool initialize_program(hashx_ctx* ctx, hashx_program* program,
-                                siphash_state keys[2]) {
+// Precompute constants
+__constant__ uint8_t precomputed_salt[32];
 
-    if (!hashx_program_generate(&keys[0], program)) {
-        return false;
-    }
-#ifndef HASHX_BLOCK_MODE
-    memcpy(&ctx->keys, &keys[1], 32);
-#else
-    memcpy(&ctx->params.salt, &keys[1], 32);
-#endif
-#ifndef NDEBUG
-    ctx->has_program = true;
-#endif
-    return true;
+static __device__ void sip_round(uint64_t &v0, uint64_t &v1, uint64_t &v2, uint64_t &v3) {
+    v0 += v1; v2 += v3;
+    v1 = __funnelshift_r(v1, v1, 13); // Use __funnelshift intrinsic for rotation
+    v3 = __funnelshift_r(v3, v3, 16);
+    v1 ^= v0; v3 ^= v2;
+    v0 = __funnelshift_l(v0, v0, 32);
+    v2 += v1; v0 += v3;
+    v1 = __funnelshift_r(v1, v1, 17);
+    v3 = __funnelshift_r(v3, v3, 21);
+    v1 ^= v2; v3 ^= v0;
+    v2 = __funnelshift_l(v2, v2, 32);
 }
 
-// Function to create a hash context
+__global__ void hashx_kernel(const hashx_ctx* ctx, const void* input, void* output) {
+    assert(ctx != NULL && ctx != HASHX_NOTSUPP);
+    assert(output != NULL);
+
+    uint64_t r[8];
+    const uint8_t* salt = precomputed_salt;
+
+    // Use shared memory for storing intermediate results
+    __shared__ uint64_t shared_r[8];
+
+    // Load input into shared memory for coalesced memory access
+    shared_r[threadIdx.x] = ((uint64_t*)input)[threadIdx.x];
+    __syncthreads();
+
+#ifndef HASHX_BLOCK_MODE
+    hashx_siphash24_ctr_state512(&ctx->keys, shared_r, r);
+#else
+    hashx_blake2b_4r(&ctx->params, shared_r, size, r);
+#endif
+
+    if (ctx->type & HASHX_COMPILED) {
+        ctx->func(r);
+    } else {
+        hashx_program_execute(ctx->program, r);
+    }
+
+    // Finalization
+    r[0] ^= load64(&salt[0]);
+    r[1] ^= load64(&salt[8]);
+    r[2] ^= load64(&salt[16]);
+    r[3] ^= load64(&salt[24]);
+
+    // Optimize SIPROUND calls
+    sip_round(r[0], r[1], r[2], r[3]);
+    sip_round(r[4], r[5], r[6], r[7]);
+
+    // Coalesced write back to global memory
+    if (threadIdx.x < 4) {
+        ((uint64_t*)output)[threadIdx.x] = r[threadIdx.x] ^ r[threadIdx.x + 4];
+    }
+}
+
 int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
     assert(ctx != NULL && ctx != HASHX_NOTSUPP);
     assert(seed != NULL || size == 0);
@@ -59,83 +98,18 @@ int hashx_make(hashx_ctx* ctx, const void* seed, size_t size) {
     return initialize_program(ctx, ctx->program, keys);
 }
 
-// Kernel function to be executed on the GPU
-__global__ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT, void* output) {
-    assert(ctx != NULL && ctx != HASHX_NOTSUPP);
-    assert(output != NULL);
-    assert(ctx->has_program);
-
-    // Thread ID calculation for parallel processing
-    int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    uint64_t r[8];
-
-#ifndef HASHX_BLOCK_MODE
-    // Calculate intermediate hash values using SipHash
-    hashx_siphash24_ctr_state512(&ctx->keys, input + tid * sizeof(uint64_t), r);
-#else
-    // Calculate intermediate hash values using Blake2b
-    hashx_blake2b_4r(&ctx->params, input + tid * sizeof(uint64_t) * 4, size, r);
-#endif
-
-    if (ctx->type & HASHX_COMPILED) {
-        ctx->func(r);
-    } else {
-        hashx_program_execute(ctx->program, r);
+static int initialize_program(hashx_ctx* ctx, hashx_program* program,
+                              siphash_state keys[2]) {
+    if (!hashx_program_generate(&keys[0], program)) {
+        return 0;
     }
-
-    /* Hash finalization to remove bias toward 0 caused by multiplications */
 #ifndef HASHX_BLOCK_MODE
-    r[0] += ctx->keys.v0;
-    r[1] += ctx->keys.v1;
-    r[6] += ctx->keys.v2;
-    r[7] += ctx->keys.v3;
+    memcpy(&ctx->keys, &keys[1], 32);
 #else
-    const uint8_t* p = (const uint8_t*)&ctx->params;
-    r[0] ^= load64(&p[8 * 0]);
-    r[1] ^= load64(&p[8 * 1]);
-    r[2] ^= load64(&p[8 * 2]);
-    r[3] ^= load64(&p[8 * 3]);
-    r[4] ^= load64(&p[8 * 4]);
-    r[5] ^= load64(&p[8 * 5]);
-    r[6] ^= load64(&p[8 * 6]);
-    r[7] ^= load64(&p[8 * 7]);
+    memcpy(precomputed_salt, &keys[1], 32);
 #endif
-    /* 1 SipRound per 4 registers is enough to pass SMHasher. */
-    SIPROUND(r[0], r[1], r[2], r[3]);
-    SIPROUND(r[4], r[5], r[6], r[7]);
-
-    /* output */
-#if HASHX_SIZE > 0
-    /* optimized output for hash sizes that are multiples of 8 */
-#if HASHX_SIZE % 8 == 0
-    uint8_t* temp_out = (uint8_t*)output;
-#if HASHX_SIZE >= 8
-    store64(temp_out + 0, r[0] ^ r[4]);
+#ifndef NDEBUG
+    ctx->has_program = true;
 #endif
-#if HASHX_SIZE >= 16
-    store64(temp_out + 8, r[1] ^ r[5]);
-#endif
-#if HASHX_SIZE >= 24
-    store64(temp_out + 16, r[2] ^ r[6]);
-#endif
-#if HASHX_SIZE >= 32
-    store64(temp_out + 24, r[3] ^ r[7]);
-#endif
-#else /* any output size */
-    uint8_t temp_out[32];
-#if HASHX_SIZE > 0
-    store64(temp_out + 0, r[0] ^ r[4]);
-#endif
-#if HASHX_SIZE > 8
-    store64(temp_out + 8, r[1] ^ r[5]);
-#endif
-#if HASHX_SIZE > 16
-    store64(temp_out + 16, r[2] ^ r[6]);
-#endif
-#if HASHX_SIZE > 24
-    store64(temp_out + 24, r[3] ^ r[7]);
-#endif
-    memcpy(output, temp_out, HASHX_SIZE);
-#endif
-#endif
+    return 1;
 }
