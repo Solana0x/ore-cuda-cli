@@ -65,6 +65,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
 
     // Ensure hash results are transferred from GPU to CPU
     for (int i = 0; i < BATCH_SIZE; i++) {
+        printf("Copying hash %d...\n", i);  // Debugging line
+
         // Copy data from the GPU to the CPU
         CUDA_CHECK(cudaMemcpy(out + i * INDEX_SPACE, memPool->hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
     }
@@ -79,6 +81,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
 
     // Clean up memory pool
     delete memPool;
+    printf("Memory pool cleaned up.\n");
 }
 
 __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
