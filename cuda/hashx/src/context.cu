@@ -27,7 +27,9 @@ hashx_ctx* hashx_alloc(hashx_type type) {
     // Initialize the context
     ctx->code = NULL;
     ctx->program = NULL;
-    ctx->type = 0;
+    
+    // Set the type
+    ctx->type = HASHX_UNDEFINED;  // Replace 'HASHX_UNDEFINED' with the appropriate value
 
     // Choose the appropriate type
     if (type & HASHX_COMPILED) {
