@@ -2,7 +2,7 @@
 /* See LICENSE for licensing information */
 
 #include <stdlib.h>
-#include <equix.h>
+#include <../include/equix.h>
 #include "context.h"
 #include "solver_heap.h"
 
