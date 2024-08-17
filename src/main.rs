@@ -28,7 +28,7 @@ use solana_sdk::{
 
 struct Miner {
     pub keypair_filepath: Option<String>,
-    pub priority_fee: u64,
+    pub priority_fee: u16,
     pub rpc_client: Arc<RpcClient>,
 }
 
@@ -104,7 +104,7 @@ struct Args {
         default_value = "0",
         global = true
     )]
-    priority_fee: u64,
+    priority_fee: u16,
 
     #[command(subcommand)]
     command: Commands,
@@ -179,7 +179,7 @@ async fn main() {
 impl Miner {
     pub fn new(
         rpc_client: Arc<RpcClient>,
-        priority_fee: u64,
+        priority_fee: u16,
         keypair_filepath: Option<String>,
     ) -> Self {
         Self {
