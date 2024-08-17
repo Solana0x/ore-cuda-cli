@@ -23,7 +23,7 @@ impl Miner {
                 std::thread::spawn({
                     move || {
                         let timer = Instant::now();
-                        let first_nonce = u8::MAX.saturating_div(args.threads).saturating_mul(i);
+                        let first_nonce = u64::MAX.saturating_div(args.threads).saturating_mul(i);
                         let mut nonce = first_nonce;
                         loop {
                             // Create hash
