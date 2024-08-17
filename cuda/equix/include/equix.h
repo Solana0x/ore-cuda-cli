@@ -10,12 +10,12 @@
 /*
  * The solver will return at most this many solutions.
  */
-#define EQUIX_MAX_SOLS 16
+#define EQUIX_MAX_SOLS 8
 
 /*
  * The number of indices.
  */
-#define EQUIX_NUM_IDX 16
+#define EQUIX_NUM_IDX 8
 
 /*
  * 16-bit index.
