@@ -18,20 +18,11 @@ __device__ const blake2b_param hashx_blake2_params = {
 };
 
 hashx_ctx* hashx_alloc(hashx_type type) {
-    hashx_ctx* ctx = NULL;
-
-    // Allocate unified memory for context
-    cudaError_t err = cudaMallocManaged(&ctx, sizeof(hashx_ctx));
-    if (err != cudaSuccess) {
-        return NULL;
-    }
-
-    // Initialize pointers to NULL
+    hashx_ctx* ctx;
+    cudaMallocManaged(&ctx, sizeof(hashx_ctx));
+    
     ctx->code = NULL;
-    ctx->program = NULL;
-
-    // Allocate memory based on the type of context
-    if (type & HASHX_COMPILED) {
+     if (type & HASHX_COMPILED) {
         if (!hashx_compiler_init(ctx)) {
             cudaFree(ctx);
             return NULL;
