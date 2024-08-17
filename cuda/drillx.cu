@@ -49,6 +49,9 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     int threadsPerBlock = 1024;
     int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
 
+    // Add debugging for grid and block size
+    printf("Launching kernel with blocksPerGrid = %d, threadsPerBlock = %d\n", blocksPerGrid, threadsPerBlock);
+
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
@@ -56,7 +59,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
 
     // Perform the hashing on the GPU
     do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool->ctxs, memPool->hash_space, NUM_HASHING_ROUNDS);
-    
+
+    // Check for errors immediately after kernel launch
     CUDA_CHECK(cudaPeekAtLastError());
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaStreamSynchronize(stream));
