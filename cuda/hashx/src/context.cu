@@ -47,8 +47,7 @@ hashx_ctx* hashx_alloc(hashx_type type) {
     }
 
 #ifdef HASHX_BLOCK_MODE
-    // Directly initialize the blake2b_param structure
-    ctx->params = hashx_blake2_params;
+    memcpy(&ctx->params, &hashx_blake2_params, 32);
 #endif
 
     return ctx;
