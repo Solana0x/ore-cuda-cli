@@ -19,15 +19,18 @@ __device__ const blake2b_param hashx_blake2_params = {
 
 // Allocate and initialize hashx context
 hashx_ctx* hashx_alloc(hashx_type type) {
-    hashx_ctx* ctx;
+    hashx_ctx* ctx = NULL;
 
     // Allocate unified memory for context
-    if (cudaMallocManaged(&ctx, sizeof(hashx_ctx)) != cudaSuccess) {
+    cudaError_t err = cudaMallocManaged(&ctx, sizeof(hashx_ctx));
+    if (err != cudaSuccess || ctx == NULL) {
+        fprintf(stderr, "Failed to allocate memory for hashx_ctx: %s\n", cudaGetErrorString(err));
         return NULL;
     }
 
     ctx->code = NULL;
     ctx->program = NULL;
+    ctx->type = 0;  // Initialize to an undefined state
 
     // Initialize the context based on type
     if (type & HASHX_COMPILED) {
@@ -37,7 +40,9 @@ hashx_ctx* hashx_alloc(hashx_type type) {
         }
         ctx->type = HASHX_COMPILED;
     } else {
-        if (cudaMallocManaged(&ctx->program, sizeof(hashx_program)) != cudaSuccess) {
+        err = cudaMallocManaged(&ctx->program, sizeof(hashx_program));
+        if (err != cudaSuccess || ctx->program == NULL) {
+            fprintf(stderr, "Failed to allocate memory for hashx_program: %s\n", cudaGetErrorString(err));
             cudaFree(ctx);
             return NULL;
         }
