@@ -39,16 +39,17 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
         }
     }
 
-    int threadsPerBlock = 1024;  // Increased number of threads per block
+    int threadsPerBlock = 1024;
     int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
 
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, NUM_HASHING_ROUNDS);
-    CUDA_CHECK(cudaGetLastError());
-
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    for (int round = 0; round < NUM_HASHING_ROUNDS; ++round) {
+        do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space);
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
 
     for (int i = 0; i < BATCH_SIZE; i++) {
         CUDA_CHECK(cudaMemcpyAsync(out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
@@ -58,15 +59,13 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     CUDA_CHECK(cudaStreamDestroy(stream));
 }
 
-__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
+__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space) {
     uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
     if (item < BATCH_SIZE * INDEX_SPACE) {
         uint32_t batch_idx = item / INDEX_SPACE;
         uint32_t i = item % INDEX_SPACE;
 
-        for (int round = 0; round < num_hashing_rounds; ++round) {
-            hash_stage0i(ctxs[batch_idx], hash_space[batch_idx], i);
-        }
+        hash_stage0i(ctxs[batch_idx], hash_space[batch_idx], i);
     }
 }
 
