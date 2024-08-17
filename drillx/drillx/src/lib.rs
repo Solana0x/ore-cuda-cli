@@ -2,7 +2,7 @@ pub use equix;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
 
-/// Generates a new drillx hash from a challenge and nonce.
+/// Generates a new Drillx hash from a challenge and nonce.
 #[inline(always)]
 pub fn hash(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> {
     let digest = digest(challenge, nonce)?;
@@ -12,7 +12,7 @@ pub fn hash(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> 
     })
 }
 
-/// Generates a new drillx hash from a challenge and nonce using pre-allocated memory.
+/// Generates a new Drillx hash using pre-allocated memory.
 #[inline(always)]
 pub fn hash_with_memory(
     memory: &mut equix::SolverMemory,
@@ -26,16 +26,16 @@ pub fn hash_with_memory(
     })
 }
 
-/// Concatenates a challenge and a nonce into a single buffer.
+/// Concatenates a challenge and nonce into a single buffer.
 #[inline(always)]
 pub fn seed(challenge: &[u8; 32], nonce: &[u8; 8]) -> [u8; 40] {
     let mut result = [0; 40];
-    result[00..32].copy_from_slice(challenge);
-    result[32..40].copy_from_slice(nonce);
+    result[..32].copy_from_slice(challenge);
+    result[32..].copy_from_slice(nonce);
     result
 }
 
-/// Constructs a keccak digest from a challenge and nonce using equix hashes.
+/// Constructs a Keccak digest from a challenge and nonce.
 #[inline(always)]
 fn digest(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<[u8; 16], DrillxError> {
     let seed = seed(challenge, nonce);
@@ -48,7 +48,7 @@ fn digest(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<[u8; 16], DrillxError
     Ok(solution.to_bytes())
 }
 
-/// Constructs a keccak digest from a challenge and nonce using equix hashes and pre-allocated memory.
+/// Constructs a Keccak digest using pre-allocated memory.
 #[inline(always)]
 fn digest_with_memory(
     memory: &mut equix::SolverMemory,
@@ -69,27 +69,25 @@ fn digest_with_memory(
     Ok(solution.to_bytes())
 }
 
-/// Sorts the provided digest as a list of u16 values.
+/// Sorts a digest as a list of `u16` values.
 #[inline(always)]
-fn sorted(mut digest: [u8; 16]) -> [u8; 16] {
+fn sorted(digest: [u8; 16]) -> [u8; 16] {
+    let mut sorted_digest = digest;
     unsafe {
-        let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut digest);
+        let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut sorted_digest);
         u16_slice.sort_unstable();
-        digest
     }
+    sorted_digest
 }
 
-/// Returns a keccak hash of the provided digest and nonce.
-/// The digest is sorted prior to hashing to prevent malleability.
-/// Delegates the hash to a syscall if compiled for the solana runtime.
+/// Returns a Keccak hash of the digest and nonce.
 #[cfg(feature = "solana")]
 #[inline(always)]
 fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
-    solana_program::keccak::hashv(&[sorted(*digest).as_slice(), &nonce.as_slice()]).to_bytes()
+    solana_program::keccak::hashv(&[sorted(*digest).as_slice(), nonce.as_slice()]).to_bytes()
 }
 
-/// Calculates a hash from the provided digest and nonce.
-/// The digest is sorted prior to hashing to prevent malleability.
+/// Calculates a hash using SHA3-256.
 #[cfg(not(feature = "solana"))]
 #[inline(always)]
 fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
@@ -99,18 +97,17 @@ fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Returns true if the digest if valid equihash construction from the challenge and nonce.
+/// Checks if the digest is a valid Equihash construction.
 pub fn is_valid_digest(challenge: &[u8; 32], nonce: &[u8; 8], digest: &[u8; 16]) -> bool {
     let seed = seed(challenge, nonce);
     equix::verify_bytes(&seed, digest).is_ok()
 }
 
-/// Returns the number of leading zeros on a 32 byte buffer.
+/// Returns the number of leading zeros in a 32-byte buffer.
 pub fn difficulty(hash: [u8; 32]) -> u32 {
     let mut count = 0;
     for &byte in &hash {
         let lz = byte.leading_zeros();
-        // println!("lz: {} for byte: {} and hash: {:?}", lz, byte, hash);
         count += lz;
         if lz < 8 {
             break;
@@ -119,7 +116,7 @@ pub fn difficulty(hash: [u8; 32]) -> u32 {
     count
 }
 
-/// The result of a drillx hash
+/// The result of a Drillx hash.
 #[derive(Default)]
 pub struct Hash {
     pub d: [u8; 16], // digest
@@ -127,13 +124,13 @@ pub struct Hash {
 }
 
 impl Hash {
-    /// The leading number of zeros on the hash
+    /// The leading number of zeros in the hash.
     pub fn difficulty(&self) -> u32 {
         difficulty(self.h)
     }
 }
 
-/// A drillx solution which can be efficiently validated on-chain
+/// A Drillx solution that can be efficiently validated on-chain.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Solution {
     pub d: [u8; 16], // digest
@@ -141,25 +138,21 @@ pub struct Solution {
 }
 
 impl Solution {
-    /// Builds a new verifiable solution from a hash and nonce
+    /// Builds a new verifiable solution from a digest and nonce.
     pub fn new(digest: [u8; 16], nonce: [u8; 8]) -> Solution {
-        Solution {
-            d: digest,
-            n: nonce,
-        }
+        Solution { d: digest, n: nonce }
     }
 
-    /// Returns true if the solution is valid
+    /// Checks if the solution is valid.
     pub fn is_valid(&self, challenge: &[u8; 32]) -> bool {
         is_valid_digest(challenge, &self.n, &self.d)
     }
 
-    /// Calculates the result hash for a given solution
+    /// Calculates the result hash for the solution.
     pub fn to_hash(&self) -> Hash {
-        let mut d = self.d;
         Hash {
             d: self.d,
-            h: hashv(&mut d, &self.n),
+            h: hashv(&self.d, &self.n),
         }
     }
 }
@@ -173,7 +166,7 @@ pub enum DrillxError {
 impl std::fmt::Display for DrillxError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match *self {
-            DrillxError::BadEquix => write!(f, "Failed equix"),
+            DrillxError::BadEquix => write!(f, "Failed Equix"),
             DrillxError::NoSolutions => write!(f, "No solutions"),
         }
     }
