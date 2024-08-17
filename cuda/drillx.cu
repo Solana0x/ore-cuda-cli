@@ -1,8 +1,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "drillx.h"
-#include "equix.h"
-#include "hashx.h"
+#include "equix/include/equix.h"
+#include "hashx/include/hashx.h"
 #include "equix/src/context.h"
 #include "equix/src/solver.h"
 #include "equix/src/solver_heap.h"
