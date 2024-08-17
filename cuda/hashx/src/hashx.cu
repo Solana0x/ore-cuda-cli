@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <../include/hashx.h>
+#include <hashx.h>
 #include "blake2.h"
 #include "hashx_endian.h"
 #include "program.h"
@@ -13,9 +13,9 @@
 #endif
 
 #ifndef HASHX_BLOCK_MODE
-#define HASHX_INPUT_ARGS input
+#define HASHX_INPUT_ARGS const uint8_t* input
 #else
-#define HASHX_INPUT_ARGS input, size
+#define HASHX_INPUT_ARGS const uint8_t* input, size_t size
 #endif
 
 // Initialize the program and set the appropriate keys
@@ -136,7 +136,6 @@ void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT_ARGS, void* output, size_t num
 
     size_t shared_memory_size = 8 * sizeof(uint64_t) * threads_per_block;
 
-    hashx_exec_kernel<<<num_blocks, threads_per_block, shared_memory_size>>>(ctx, HASHX_INPUT_ARGS, output, num_hashes);
+    hashx_exec_kernel<<<num_blocks, threads_per_block, shared_memory_size>>>(ctx, input, output, num_hashes);
     cudaDeviceSynchronize();
 }
-
