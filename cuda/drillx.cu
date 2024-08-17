@@ -79,6 +79,9 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     // Destroy the stream
     CUDA_CHECK(cudaStreamDestroy(stream));
 
+    // Debugging: Zero out memory pool before deleting
+    memset(memPool, 0, sizeof(MemoryPool));
+    
     // Clean up memory pool
     delete memPool;
     printf("Memory pool cleaned up.\n");
