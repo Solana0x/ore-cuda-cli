@@ -14,12 +14,12 @@
 #endif
 
 #define CLEAR(x) memset(&x, 0, sizeof(x))
-#define MAKE_ITEM(bucket, left, right) ((left) << 17 | (right) << 8 | (bucket))
-#define ITEM_BUCKET(item) (item) % NUM_COARSE_BUCKETS
-#define ITEM_LEFT_IDX(item) (item) >> 17
-#define ITEM_RIGHT_IDX(item) ((item) >> 8) & 511
-#define INVERT_BUCKET(idx) -(idx) % NUM_COARSE_BUCKETS
-#define INVERT_SCRATCH(idx) -(idx) % NUM_FINE_BUCKETS
+#define MAKE_ITEM(bucket, left, right) (((left) << 17) | ((right) << 8) | (bucket))
+#define ITEM_BUCKET(item) ((item) % NUM_COARSE_BUCKETS)
+#define ITEM_LEFT_IDX(item) ((item) >> 17)
+#define ITEM_RIGHT_IDX(item) (((item) >> 8) & 511)
+#define INVERT_BUCKET(idx) (-(idx) % NUM_COARSE_BUCKETS)
+#define INVERT_SCRATCH(idx) (-(idx) % NUM_FINE_BUCKETS)
 #define STAGE1_IDX(buck, pos) heap->stage1_indices.buckets[buck].items[pos]
 #define STAGE2_IDX(buck, pos) heap->stage2_indices.buckets[buck].items[pos]
 #define STAGE3_IDX(buck, pos) heap->stage3_indices.buckets[buck].items[pos]
@@ -123,8 +123,7 @@ __device__ void solve_stage0(uint64_t* hashes, solver_heap* heap) {
         u32 bucket_idx = value % NUM_COARSE_BUCKETS;
         
         // Ensure aligned access
-        uint16_t* aligned_counts = reinterpret_cast<uint16_t*>(&heap->stage1_indices.counts[bucket_idx]);
-        u32 item_idx = atomicAdd_u16(aligned_counts, 1);
+        u32 item_idx = atomicAdd_u16(reinterpret_cast<uint16_t*>(&heap->stage1_indices.counts[bucket_idx]), 1);
         
         if (item_idx >= COARSE_BUCKET_ITEMS)
             continue;
@@ -145,7 +144,7 @@ __device__ void hash_stage0i(hashx_ctx* hash_func, uint64_t* out, uint32_t i) {
     u32 fine_buck_idx = value % NUM_FINE_BUCKETS;                             \
     u32 fine_cpl_bucket = INVERT_SCRATCH(fine_buck_idx);                      \
     u32 fine_cpl_size = SCRATCH_SIZE(fine_cpl_bucket);                        \
-    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; fine_idx += 4) {         \
+    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; fine_idx++) {         \
         u32 cpl_index = SCRATCH(fine_cpl_bucket, fine_idx);                   \
         stage1_data_item cpl_value = STAGE1_DATA(cpl_bucket, cpl_index);      \
         stage1_data_item sum = value + cpl_value;                             \
@@ -192,7 +191,7 @@ __device__ void solve_stage1(solver_heap* heap) {
     u32 fine_buck_idx = value % NUM_FINE_BUCKETS;                             \
     u32 fine_cpl_bucket = INVERT_SCRATCH(fine_buck_idx);                      \
     u32 fine_cpl_size = SCRATCH_SIZE(fine_cpl_bucket);                        \
-    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; fine_idx += 4) {         \
+    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; fine_idx++) {         \
         u32 cpl_index = SCRATCH(fine_cpl_bucket, fine_idx);                   \
         stage2_data_item cpl_value = STAGE2_DATA(cpl_bucket, cpl_index);      \
         stage2_data_item sum = value + cpl_value;                             \
@@ -239,7 +238,7 @@ __device__ void solve_stage2(solver_heap* heap) {
     u32 fine_buck_idx = value % NUM_FINE_BUCKETS;                             \
     u32 fine_cpl_bucket = INVERT_SCRATCH(fine_buck_idx);                      \
     u32 fine_cpl_size = SCRATCH_SIZE(fine_cpl_bucket);                        \
-    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; fine_idx += 4) {         \
+    for (u32 fine_idx = 0; fine_idx < fine_cpl_size; fine_idx++) {         \
         u32 cpl_index = SCRATCH(fine_cpl_bucket, fine_idx);                   \
         stage3_data_item cpl_value = STAGE3_DATA(cpl_bucket, cpl_index);      \
         stage3_data_item sum = value + cpl_value;                             \
