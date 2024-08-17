@@ -43,7 +43,9 @@ static FORCE_INLINE void blake2b_set_lastblock(blake2b_state* S) {
 // Increment the counter
 static FORCE_INLINE void blake2b_increment_counter(blake2b_state* S, uint64_t inc) {
     S->t[0] += inc;
-    S->t[1] += (S->t[0] < inc);
+    if (S->t[0] < inc) {
+        S->t[1]++;
+    }
 }
 
 // Initialize the Blake2b state with IVs
@@ -102,12 +104,18 @@ static void blake2b_compress(blake2b_state* S, const uint8_t* block) {
         m[i] = load64(block + i * sizeof(m[i]));
     }
 
-    memcpy(v, S->h, 8 * sizeof(uint64_t));
-    memcpy(v + 8, blake2b_IV, 4 * sizeof(uint64_t));
-    v[12] ^= S->t[0];
-    v[13] ^= S->t[1];
-    v[14] ^= S->f[0];
-    v[15] ^= S->f[1];
+    for (unsigned int i = 0; i < 8; ++i) {
+        v[i] = S->h[i];
+    }
+
+    v[8] = blake2b_IV[0];
+    v[9] = blake2b_IV[1];
+    v[10] = blake2b_IV[2];
+    v[11] = blake2b_IV[3];
+    v[12] = blake2b_IV[4] ^ S->t[0];
+    v[13] = blake2b_IV[5] ^ S->t[1];
+    v[14] = blake2b_IV[6] ^ S->f[0];
+    v[15] = blake2b_IV[7] ^ S->f[1];
 
     // 12 rounds
     for (unsigned int i = 0; i < 12; ++i) {
@@ -128,12 +136,18 @@ static void blake2b_compress_4r(blake2b_state* S, const uint8_t* block) {
         m[i] = load64(block + i * sizeof(m[i]));
     }
 
-    memcpy(v, S->h, 8 * sizeof(uint64_t));
-    memcpy(v + 8, blake2b_IV, 4 * sizeof(uint64_t));
-    v[12] ^= S->t[0];
-    v[13] ^= S->t[1];
-    v[14] ^= S->f[0];
-    v[15] ^= S->f[1];
+    for (unsigned int i = 0; i < 8; ++i) {
+        v[i] = S->h[i];
+    }
+
+    v[8] = blake2b_IV[0];
+    v[9] = blake2b_IV[1];
+    v[10] = blake2b_IV[2];
+    v[11] = blake2b_IV[3];
+    v[12] = blake2b_IV[4] ^ S->t[0];
+    v[13] = blake2b_IV[5] ^ S->t[1];
+    v[14] = blake2b_IV[6] ^ S->f[0];
+    v[15] = blake2b_IV[7] ^ S->f[1];
 
     // 4 rounds
     for (unsigned int i = 0; i < 4; ++i) {
@@ -152,10 +166,9 @@ int hashx_blake2b_update(blake2b_state* S, const void* in, size_t inlen) {
     }
 
     const uint8_t* pin = (const uint8_t*)in;
-    size_t fill;
 
     while (inlen > 0) {
-        fill = BLAKE2B_BLOCKBYTES - S->buflen;
+        size_t fill = BLAKE2B_BLOCKBYTES - S->buflen;
 
         if (inlen > fill) {
             memcpy(S->buf + S->buflen, pin, fill);
@@ -180,18 +193,14 @@ int hashx_blake2b_final(blake2b_state* S, void* out, size_t outlen) {
         return -1;
     }
 
-    uint8_t buffer[BLAKE2B_OUTBYTES] = { 0 };
-
     blake2b_increment_counter(S, S->buflen);
     blake2b_set_lastblock(S);
     memset(S->buf + S->buflen, 0, BLAKE2B_BLOCKBYTES - S->buflen); /* Padding */
     blake2b_compress(S, S->buf);
 
-    for (unsigned int i = 0; i < 8; ++i) { /* Output full hash to temp buffer */
-        store64(buffer + sizeof(S->h[i]) * i, S->h[i]);
+    for (unsigned int i = 0; i < 8; ++i) {
+        store64((uint8_t*)out + sizeof(S->h[i]) * i, S->h[i]);
     }
-
-    memcpy(out, buffer, S->outlen);
 
     return 0;
 }
@@ -225,4 +234,3 @@ void hashx_blake2b_4r(const blake2b_param* params, const void* in, size_t inlen,
     /* Output hash */
     memcpy(out, state.h, sizeof(state.h));
 }
-
