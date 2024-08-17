@@ -56,16 +56,26 @@ EQUIX_API equix_ctx* equix_alloc(equix_ctx_flags flags);
 EQUIX_API void equix_free(equix_ctx* ctx);
 
 /*
- * Solve the problem using multiple threads.
+ * Solve the problem using all available CPU cores.
  *
  * @param ctx is a pointer to the context.
  * @param solutions is a pointer to an array of equix_solution structures.
  * @param max_sols is the maximum number of solutions to find (should not exceed EQUIX_MAX_SOLS).
- * @param num_threads is the number of threads to use for solving.
  *
  * @return the number of solutions found.
  */
-EQUIX_API int equix_solve_multi_threaded(equix_ctx* ctx, equix_solution* solutions, int max_sols, int num_threads);
+EQUIX_API int equix_solve_parallel_cpu(equix_ctx* ctx, equix_solution* solutions, int max_sols);
+
+/*
+ * Solve the problem using GPU acceleration.
+ *
+ * @param ctx is a pointer to the context.
+ * @param solutions is a pointer to an array of equix_solution structures.
+ * @param max_sols is the maximum number of solutions to find (should not exceed EQUIX_MAX_SOLS).
+ *
+ * @return the number of solutions found.
+ */
+EQUIX_API int equix_solve_parallel_gpu(equix_ctx* ctx, equix_solution* solutions, int max_sols);
 
 #ifdef __cplusplus
 }
