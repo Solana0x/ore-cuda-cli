@@ -121,13 +121,19 @@ __device__ void solve_stage0(uint64_t* hashes, solver_heap* heap) {
     for (u32 i = 0; i < INDEX_SPACE; ++i) {
         uint64_t value = hashes[i];
         u32 bucket_idx = value % NUM_COARSE_BUCKETS;
-        u32 item_idx = atomicAdd_u16(reinterpret_cast<uint16_t*>(&heap->stage1_indices.counts[bucket_idx]), 1);  // Correct cast
+        
+        // Ensure aligned access
+        uint16_t* aligned_counts = reinterpret_cast<uint16_t*>(&heap->stage1_indices.counts[bucket_idx]);
+        u32 item_idx = atomicAdd_u16(aligned_counts, 1);
+        
         if (item_idx >= COARSE_BUCKET_ITEMS)
             continue;
+        
         STAGE1_IDX(bucket_idx, item_idx) = i;
         STAGE1_DATA(bucket_idx, item_idx) = value / NUM_COARSE_BUCKETS; /* 52 bits */
     }
 }
+
 
 __device__ void hash_stage0i(hashx_ctx* hash_func, uint64_t* out, uint32_t i) {
     uint64_t hash = hash_value(hash_func, i);
