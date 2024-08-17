@@ -30,10 +30,12 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     size_t heapSize = 24L * 1024L * 1024L * 1024L; // 24 GB
     CUDA_CHECK(cudaDeviceSetLimit(cudaLimitMallocHeapSize, heapSize));
 
-    // Use unified memory for automatic paging between CPU and GPU
+    // Allocate the memory pool using managed memory
     MemoryPool* memPool;
     CUDA_CHECK(cudaMallocManaged(&memPool, sizeof(MemoryPool)));
-    memPool = new(memPool) MemoryPool(BATCH_SIZE); // Initialize the MemoryPool object
+
+    // Initialize the MemoryPool object directly
+    new(memPool) MemoryPool(BATCH_SIZE); 
 
     uint8_t seed[40];
     memcpy(seed, challenge, 32);
