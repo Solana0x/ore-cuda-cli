@@ -28,12 +28,9 @@ hashx_ctx* hashx_alloc(hashx_type type) {
             return NULL;
         }
         ctx->type = HASHX_COMPILED;
-    } else {
-        err = cudaMallocManaged(&ctx->program, sizeof(hashx_program));
-        if (err != cudaSuccess) {
-            cudaFree(ctx);
-            return NULL;
-        }
+    }
+    else {
+        cudaMallocManaged(&ctx->program, sizeof(hashx_program));
         ctx->type = HASHX_INTERPRETED;
     }
 
@@ -46,11 +43,14 @@ hashx_ctx* hashx_alloc(hashx_type type) {
 
 void hashx_free(hashx_ctx* ctx) {
     if (ctx != NULL && ctx != HASHX_NOTSUPP) {
-        if (ctx->type & HASHX_COMPILED) {
-            hashx_compiler_destroy(ctx);
-        } else {
-            cudaFree(ctx->program);
-        }
+        if (ctx->code != NULL) {
+            if (ctx->type & HASHX_COMPILED) {
+                hashx_compiler_destroy(ctx);
+            }
+            else {
+                cudaFree(ctx->program);
+            }
+       }
         cudaFree(ctx);
     }
 }
