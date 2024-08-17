@@ -81,9 +81,9 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     // Destroy the stream
     CUDA_CHECK(cudaStreamDestroy(stream));
 
-    // Clean up memory pool
-    delete memPool;
-    printf("Memory pool cleaned up.\n");
+    // Simplify cleanup (temporary comment out delete)
+    // delete memPool;
+    printf("Memory pool cleanup skipped for debugging.\n");
 }
 
 __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
@@ -133,4 +133,3 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
     CUDA_CHECK(cudaFree(d_solutions));
     CUDA_CHECK(cudaFree(d_num_sols));
 }
-
