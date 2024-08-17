@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>  // For dynamic memory allocation
 
 /* Maximum number of solutions returned by the solver */
 #define EQUIX_MAX_SOLS 16
@@ -20,7 +21,7 @@ typedef uint16_t equix_idx;
 
 /* Solution structure */
 typedef struct equix_solution {
-    equix_idx idx[EQUIX_NUM_IDX];
+    equix_idx* idx;  // Dynamically allocated array
 } equix_solution;
 
 /* Opaque structure for Equi-X context */
@@ -54,6 +55,21 @@ EQUIX_API equix_ctx* equix_alloc(equix_ctx_flags flags);
 
 /* Free an Equi-X context */
 EQUIX_API void equix_free(equix_ctx* ctx);
+
+/*
+ * Initialize the solution structure.
+ * This function allocates memory for the indices in the solution.
+ *
+ * @param solution is a pointer to an equix_solution structure.
+ */
+EQUIX_API void equix_solution_init(equix_solution* solution);
+
+/*
+ * Free the memory allocated for the solution structure.
+ *
+ * @param solution is a pointer to an equix_solution structure.
+ */
+EQUIX_API void equix_solution_free(equix_solution* solution);
 
 /*
  * Solve the problem using all available CPU cores.
