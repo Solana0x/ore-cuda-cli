@@ -12,26 +12,24 @@
 #define HASHX_SALT "HashX v1"
 #endif
 
+// Device constant for Blake2b parameters
 __device__ const blake2b_param hashx_blake2_params = {
     64, 0, 1, 1, 0, 0, 0, 0, { 0 }, STRINGIZE(HASHX_SALT), { 0 }
 };
 
+// Allocate and initialize hashx context
 hashx_ctx* hashx_alloc(hashx_type type) {
     hashx_ctx* ctx;
 
-    // Allocate memory for context
+    // Allocate unified memory for context
     if (cudaMallocManaged(&ctx, sizeof(hashx_ctx)) != cudaSuccess) {
         return NULL;
     }
 
-    // Initialize the context
     ctx->code = NULL;
     ctx->program = NULL;
-    
-    // Set the type
-    ctx->type = HASHX_UNKNOWN;  // Replace with the appropriate default value from hashx_type
 
-    // Choose the appropriate type
+    // Initialize the context based on type
     if (type & HASHX_COMPILED) {
         if (!hashx_compiler_init(ctx)) {
             cudaFree(ctx);
@@ -47,12 +45,14 @@ hashx_ctx* hashx_alloc(hashx_type type) {
     }
 
 #ifdef HASHX_BLOCK_MODE
-    cudaMemcpy(&ctx->params, &hashx_blake2_params, sizeof(blake2b_param), cudaMemcpyDefault);
+    // Copy the Blake2b parameters to the context
+    memcpy(&ctx->params, &hashx_blake2_params, sizeof(blake2b_param));
 #endif
 
     return ctx;
 }
 
+// Free hashx context
 void hashx_free(hashx_ctx* ctx) {
     if (ctx != NULL && ctx != HASHX_NOTSUPP) {
         if (ctx->type & HASHX_COMPILED) {
