@@ -18,8 +18,8 @@ use crate::{
 };
 
 extern "C" {
-    pub static BATCH_SIZE: u32;
-    pub static NUM_HASHING_ROUNDS: u32;
+    pub static BATCH_SIZE: u16;
+    pub static NUM_HASHING_ROUNDS: u8;
     pub fn hash(challenge: *const u8, nonce: *const u8, out: *mut u64, rounds: u32);
     pub fn solve_all_stages(hashes: *const u64, out: *mut u8, sols: *mut u32, num_sets: i32);
 }
@@ -45,7 +45,7 @@ impl Miner {
                 proof,
                 cutoff_time,
                 args.threads,
-                config.min_difficulty as u32,
+                config.min_difficulty as u8,
             )
             .await;
 
@@ -69,9 +69,9 @@ impl Miner {
 
     async fn find_hash_par_gpu(
         proof: Proof,
-        cutoff_time: u64,
-        threads: u64,
-        min_difficulty: u32,
+        cutoff_time: u8,
+        threads: u8,
+        min_difficulty: u8,
     ) -> Solution {
         let threads = num_cpus::get();
         let progress_bar = Arc::new(spinner::new_progress_bar());
@@ -200,8 +200,8 @@ impl Miner {
         Solution::new(final_best.2.d, final_best.0.to_le_bytes())
     }
 
-    pub fn check_num_cores(&self, threads: u64) {
-        let num_cores = num_cpus::get() as u64;
+    pub fn check_num_cores(&self, threads: u8) {
+        let num_cores = num_cpus::get() as u8;
         if threads.gt(&num_cores) {
             println!(
                 "{} Number of threads ({}) exceeds available cores ({})",
@@ -221,14 +221,14 @@ impl Miner {
             .le(&clock.unix_timestamp)
     }
 
-    async fn get_cutoff(&self, proof: Proof, buffer_time: u64) -> u64 {
+    async fn get_cutoff(&self, proof: Proof, buffer_time: u8) -> u8 {
         let clock = get_clock(&self.rpc_client).await;
         proof
             .last_hash_at
             .saturating_add(60)
-            .saturating_sub(buffer_time as i64)
+            .saturating_sub(buffer_time as i16)
             .saturating_sub(clock.unix_timestamp)
-            .max(0) as u64
+            .max(0) as u8
     }
 }
 
