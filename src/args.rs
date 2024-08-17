@@ -19,7 +19,7 @@ pub struct BenchmarkArgs {
         help = "The number of threads to use during the benchmark",
         default_value = "1"
     )]
-    pub threads: u8,
+    pub threads: u64,
 }
 
 #[derive(Parser, Debug)]
@@ -75,7 +75,7 @@ pub struct MineArgs {
         help = "The number seconds before the deadline to stop mining and start submitting",
         default_value = "5"
     )]
-    pub buffer_time: u8,
+    pub buffer_time: u64,
 }
 
 #[derive(Parser, Debug)]
