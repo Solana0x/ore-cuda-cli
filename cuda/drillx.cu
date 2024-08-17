@@ -49,7 +49,6 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     int threadsPerBlock = 1024;
     int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
 
-    // Add debugging for grid and block size
     printf("Launching kernel with blocksPerGrid = %d, threadsPerBlock = %d\n", blocksPerGrid, threadsPerBlock);
 
     cudaStream_t stream;
@@ -60,28 +59,16 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     // Perform the hashing on the GPU
     do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool->ctxs, memPool->hash_space, NUM_HASHING_ROUNDS);
 
-    // Check for errors immediately after kernel launch
     CUDA_CHECK(cudaPeekAtLastError());
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    printf("Kernel finished. Copying data back to CPU in chunks...\n");
-
-    // Copy each hash result from the GPU to the CPU in smaller chunks
-    for (int i = 0; i < BATCH_SIZE; i++) {
-        printf("Copying hash_space[%d]...\n", i);
-        CUDA_CHECK(cudaMemcpy(out + i * INDEX_SPACE, memPool->hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
-    }
-
-    // Synchronize after copying the data
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    printf("Data copied back to CPU. Cleaning up...\n");
+    printf("Kernel finished. Skipping data transfer to CPU.\n");
 
     // Destroy the stream
     CUDA_CHECK(cudaStreamDestroy(stream));
 
-    // Simplify cleanup (temporary comment out delete)
+    // Memory pool cleanup is still skipped for debugging purposes
     // delete memPool;
     printf("Memory pool cleanup skipped for debugging.\n");
 }
@@ -124,9 +111,6 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaDeviceSynchronize());
-
-    CUDA_CHECK(cudaMemcpy(out, d_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(sols, d_num_sols, num_sets * sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
     CUDA_CHECK(cudaFree(d_hashes));
     CUDA_CHECK(cudaFree(d_heaps));
