@@ -30,12 +30,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     size_t heapSize = 24L * 1024L * 1024L * 1024L; // 24 GB
     CUDA_CHECK(cudaDeviceSetLimit(cudaLimitMallocHeapSize, heapSize));
 
-    // Allocate the memory pool using managed memory
-    MemoryPool* memPool;
-    CUDA_CHECK(cudaMallocManaged(&memPool, sizeof(MemoryPool)));
-
-    // Initialize the MemoryPool object
-    memPool = new (memPool) MemoryPool(BATCH_SIZE);
+    // Allocate the memory pool on the host
+    MemoryPool* memPool = new MemoryPool(BATCH_SIZE);
 
     uint8_t seed[40];
     memcpy(seed, challenge, 32);
@@ -45,6 +41,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
         memcpy(seed + 32, &nonce_offset, 8);
         memPool->ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
         if (!memPool->ctxs[i] || !hashx_make(memPool->ctxs[i], seed, 40)) {
+            delete memPool; // Clean up before returning
             return;
         }
     }
@@ -68,8 +65,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     CUDA_CHECK(cudaStreamDestroy(stream));
 
     // Clean up memory pool
-    memPool->~MemoryPool(); // Explicit destructor call
-    CUDA_CHECK(cudaFree(memPool));
+    delete memPool;
 }
 
 __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
