@@ -56,7 +56,7 @@ impl Miner {
         // Update log
         progress_bar.finish_with_message(format!(
             "Hashpower: {} H/sec",
-            total_nonces.saturating_div(TEST_DURATION as u64),
+            total_nonces.saturating_div(TEST_DURATION as u8),
         ));
     }
 }
