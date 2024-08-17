@@ -85,7 +85,7 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
     equix_solution *h_solutions;
     uint32_t *h_num_sols;
 
-    // Ensure host memory is correctly aligned
+    // Using cudaHostAlloc to ensure correct alignment for host memory
     CUDA_CHECK(cudaHostAlloc(reinterpret_cast<void**>(&h_solutions), num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution), cudaHostAllocDefault));
     CUDA_CHECK(cudaHostAlloc(reinterpret_cast<void**>(&h_num_sols), num_sets * sizeof(uint32_t), cudaHostAllocDefault));
 
@@ -120,4 +120,3 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
     CUDA_CHECK(cudaFreeHost(h_solutions));
     CUDA_CHECK(cudaFreeHost(h_num_sols));
 }
-
