@@ -2,7 +2,7 @@
 
 ``` Optimize for RTX 4090 ```
 
-` CURRENT 1600 H/s`
+` CURRENT 2000 H/s`
 
 A command line 
 
