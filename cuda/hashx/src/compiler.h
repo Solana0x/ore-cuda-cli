@@ -22,7 +22,7 @@ HASHX_PRIVATE void hashx_compiler_destroy(hashx_ctx* compiler);
 #define COMP_PAGE_SIZE 65536  // Increased from 4096 to 65536 bytes
 
 // Adjusted reserve size to provide more buffer space, potentially reducing memory reallocation overhead
-#define COMP_RESERVE_SIZE 4096  // Increased from 1024 to 2048 bytes
+#define COMP_RESERVE_SIZE 256  // Increased from 1024 to 2048 bytes
 
 // Average instruction size (remain the same, assuming 5 bytes per instruction is accurate)
 #define COMP_AVG_INSTR_SIZE 5
