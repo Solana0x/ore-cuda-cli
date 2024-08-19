@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "../include/equix.h"
 
-#define INDEX_SPACE (UINT32_C(1) << 20)
+#define INDEX_SPACE (UINT32_C(1) << 16)
 #define NUM_COARSE_BUCKETS 256
 #define NUM_FINE_BUCKETS 128
 #define COARSE_BUCKET_ITEMS 336
