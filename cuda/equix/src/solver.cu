@@ -1,6 +1,6 @@
 #include <cuda_runtime.h>
 #include "solver.h"
-#include "context.h"
+#include "context.h"  // Make sure this includes the correct definitions
 #include "solver_heap.h"
 #include <../../hashx/src/hashx_endian.h>
 #include <string.h>
@@ -49,8 +49,9 @@ typedef stage1_idx_item s1_idx;
 typedef stage2_idx_item s2_idx;
 typedef stage3_idx_item s3_idx;
 
+// Add a global memory pointer to the existing solver_heap structure
 struct solver_heap {
-    // Add necessary fields for solver_heap
+    // Existing members
     stage1_indices_type stage1_indices;
     stage2_indices_type stage2_indices;
     stage3_indices_type stage3_indices;
@@ -59,7 +60,7 @@ struct solver_heap {
     stage3_data_type stage3_data;
     scratch_ht_type scratch_ht;
 
-    // Add global data buffer to solver_heap
+    // New global memory pointer
     uint32_t* stage1_data_global;
 };
 
