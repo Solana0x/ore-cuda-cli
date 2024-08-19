@@ -10,7 +10,7 @@
 /*
  * The solver will return at most this many solutions.
  */
-#define EQUIX_MAX_SOLS 64
+#define EQUIX_MAX_SOLS 32
 
 /*
  * The number of indices.
