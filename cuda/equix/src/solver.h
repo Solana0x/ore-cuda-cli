@@ -7,7 +7,6 @@
 #include <../include/equix.h>
 #include <../../hashx/src/hashx_endian.h>
 #include <stdbool.h>
-#include <immintrin.h>  // Header for SIMD intrinsics
 #include "context.h"
 
 #define EQUIX_STAGE1_MASK ((1ull << 15) - 1)
@@ -15,33 +14,22 @@
 #define EQUIX_FULL_MASK ((1ull << 60) - 1)
 
 __device__ inline bool tree_cmp1(const equix_idx* left, const equix_idx* right) {
-    // Load 16-bit values from both pointers
-    __m128i left_vec = _mm_loadu_si128((__m128i*)left);
-    __m128i right_vec = _mm_loadu_si128((__m128i*)right);
-    // Compare using SIMD
-    __m128i cmp_result = _mm_cmpeq_epi16(left_vec, right_vec);
-    // Return if left <= right for all elements
-    return _mm_movemask_epi8(cmp_result) != 0;
+    // Compare 16-bit values using CUDA vector types
+    return *left <= *right;
 }
 
 __device__ inline bool tree_cmp2(const equix_idx* left, const equix_idx* right) {
-    // Load 32-bit values from both pointers
-    __m128i left_vec = _mm_loadu_si128((__m128i*)left);
-    __m128i right_vec = _mm_loadu_si128((__m128i*)right);
-    // Compare using SIMD
-    __m128i cmp_result = _mm_cmpeq_epi32(left_vec, right_vec);
-    // Return if left <= right for all elements
-    return _mm_movemask_epi8(cmp_result) != 0;
+    // Use CUDA intrinsics to load and compare 32-bit values
+    uint32_t left_val = load32(left);
+    uint32_t right_val = load32(right);
+    return left_val <= right_val;
 }
 
 __device__ inline bool tree_cmp4(const equix_idx* left, const equix_idx* right) {
-    // Load 64-bit values from both pointers
-    __m128i left_vec = _mm_loadu_si128((__m128i*)left);
-    __m128i right_vec = _mm_loadu_si128((__m128i*)right);
-    // Compare using SIMD
-    __m128i cmp_result = _mm_cmpeq_epi64(left_vec, right_vec);
-    // Return if left <= right for all elements
-    return _mm_movemask_epi8(cmp_result) != 0;
+    // Use CUDA intrinsics to load and compare 64-bit values
+    uint64_t left_val = load64(left);
+    uint64_t right_val = load64(right);
+    return left_val <= right_val;
 }
 
 __device__ void hash_stage0i(hashx_ctx* hash_func, uint64_t* out, uint32_t i);
