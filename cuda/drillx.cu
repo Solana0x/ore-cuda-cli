@@ -25,10 +25,14 @@ extern "C" void set_num_hashing_rounds(int rounds) {
 }
 
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
-    const int sub_batch_size = 1024;  // Reduce the size of each sub-batch
+    const int sub_batch_size = 1024;  // Further reduced sub-batch size
     const int num_sub_batches = BATCH_SIZE / sub_batch_size;
 
+    // MemoryPool created once and reused
     MemoryPool memPool(sub_batch_size);
+
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreate(&stream));
 
     for (int sb = 0; sb < num_sub_batches; sb++) {
         uint8_t seed[40];
@@ -37,17 +41,19 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
         for (int i = 0; i < sub_batch_size; i++) {
             uint64_t nonce_offset = *((uint64_t*)nonce) + sb * sub_batch_size + i;
             memcpy(seed + 32, &nonce_offset, 8);
-            memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
-            if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed, 40)) {
-                return;
+            if (!memPool.ctxs[i]) {
+                memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
+                if (!memPool.ctxs[i]) {
+                    return; // Allocation failed, handle error
+                }
+            }
+            if (!hashx_make(memPool.ctxs[i], seed, 40)) {
+                return; // Hash creation failed, handle error
             }
         }
 
-        int threadsPerBlock = 1024;
+        int threadsPerBlock = 512; // Adjust according to available resources
         int blocksPerGrid = (sub_batch_size * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
-
-        cudaStream_t stream;
-        CUDA_CHECK(cudaStreamCreate(&stream));
 
         do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, NUM_HASHING_ROUNDS);
         CUDA_CHECK(cudaGetLastError());
@@ -59,8 +65,9 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
         }
 
         CUDA_CHECK(cudaStreamSynchronize(stream));
-        CUDA_CHECK(cudaStreamDestroy(stream));
     }
+
+    CUDA_CHECK(cudaStreamDestroy(stream));
 }
 
 __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
