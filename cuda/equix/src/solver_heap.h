@@ -11,7 +11,7 @@
 #define FINE_BUCKET_ITEMS 12
 
 /* Use aligned memory for better cache performance */
-#define CACHE_LINE_SIZE 128
+#define CACHE_LINE_SIZE 64
 
 typedef uint16_t fine_item;
 
