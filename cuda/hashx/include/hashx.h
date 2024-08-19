@@ -23,7 +23,7 @@
 #endif
 
 /* Opaque struct representing a HashX instance */
-typedef struct hashx_ctx hashx_ctx;
+typedef struct __attribute__((aligned(64))) hashx_ctx hashx_ctx;
 
 /* Type of hash function */
 typedef enum hashx_type {
@@ -65,7 +65,7 @@ __host__ HASHX_API hashx_ctx* hashx_alloc(hashx_type type);
  *
  * @return 1 on success, 0 on failure.                                         
 */
-__host__ HASHX_API int hashx_make(hashx_ctx* ctx, const void* seed, size_t size);
+__host__ HASHX_API int hashx_make(hashx_ctx* __restrict__ ctx, const void* __restrict__ seed, size_t size);
 
 /*
  * Execute the HashX function.
@@ -76,7 +76,7 @@ __host__ HASHX_API int hashx_make(hashx_ctx* ctx, const void* seed, size_t size)
  * @param output is a pointer to the result buffer. HASHX_SIZE bytes will be
  *        written.
  */
-__device__ HASHX_API void hashx_exec(const hashx_ctx* ctx, HASHX_INPUT, void* output);
+__device__ HASHX_API void hashx_exec(const hashx_ctx* __restrict__ ctx, HASHX_INPUT, void* __restrict__ output);
 
 /*
  * Free a HashX instance.
