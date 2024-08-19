@@ -126,7 +126,8 @@ __device__ void build_solution(equix_solution* solution, solver_heap* heap, s3_i
 // Optimized solve stage with shared memory for performance boost
 __device__ void solve_stage0(uint64_t* hashes, solver_heap* heap) {
     __shared__ uint32_t local_counts[NUM_COARSE_BUCKETS];
-    __shared__ uint32_t local_data[NUM_COARSE_BUCKETS][COARSE_BUCKET_ITEMS];
+    // Move local_data to global memory to reduce shared memory usage
+    uint32_t* global_data = heap->stage1_data_global;
 
     if (threadIdx.x < NUM_COARSE_BUCKETS) {
         local_counts[threadIdx.x] = 0;
@@ -138,14 +139,16 @@ __device__ void solve_stage0(uint64_t* hashes, solver_heap* heap) {
         u32 bucket_idx = value % NUM_COARSE_BUCKETS;
         u32 item_idx = atomicAdd(&local_counts[bucket_idx], 1);
         if (item_idx < COARSE_BUCKET_ITEMS) {
-            local_data[bucket_idx][item_idx] = value / NUM_COARSE_BUCKETS; /* 52 bits */
+            global_data[bucket_idx * COARSE_BUCKET_ITEMS + item_idx] = value / NUM_COARSE_BUCKETS; /* 52 bits */
         }
     }
 
     __syncthreads();
     if (threadIdx.x < NUM_COARSE_BUCKETS) {
         heap->stage1_indices.counts[threadIdx.x] = local_counts[threadIdx.x];
-        memcpy(heap->stage1_data.buckets[threadIdx.x].items, local_data[threadIdx.x], COARSE_BUCKET_ITEMS * sizeof(uint32_t));
+        memcpy(heap->stage1_data.buckets[threadIdx.x].items, 
+               &global_data[threadIdx.x * COARSE_BUCKET_ITEMS], 
+               COARSE_BUCKET_ITEMS * sizeof(uint32_t));
     }
 }
 
