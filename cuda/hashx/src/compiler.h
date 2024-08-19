@@ -25,7 +25,7 @@ HASHX_PRIVATE void hashx_compiler_destroy(hashx_ctx* compiler);
 #define COMP_RESERVE_SIZE 2048  // Increased from 1024 to 2048 bytes
 
 // Average instruction size (remain the same, assuming 5 bytes per instruction is accurate)
-#define COMP_AVG_INSTR_SIZE 5
+#define COMP_AVG_INSTR_SIZE 50
 
 // Code size calculation, aligned to the new page size
 #define COMP_CODE_SIZE                                                        \
