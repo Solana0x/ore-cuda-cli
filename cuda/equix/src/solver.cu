@@ -184,7 +184,7 @@ __global__ void solve_stage0_kernel(hashx_ctx* hash_func, solver_heap* heap) {
 }
 
 // Launch solve stage kernel
-void solver_solve(solver_heap* heap) {
-    solve_stage0_kernel<<<NUM_BLOCKS, THREADS_PER_BLOCK>>>(heap->hash_func, heap);
+void solver_solve(solver_heap* heap, hashx_ctx* hash_func) {
+    solve_stage0_kernel<<<NUM_BLOCKS, THREADS_PER_BLOCK>>>(hash_func, heap);
     cudaDeviceSynchronize();
 }
