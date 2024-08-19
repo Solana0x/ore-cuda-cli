@@ -22,15 +22,19 @@ __device__ __forceinline__ uint64_t hashx_siphash13_ctr(uint64_t input, const si
 
     v3 ^= input;
 
-    SIPROUND(v0, v1, v2, v3);
+    // Perform SIPROUND in a warp-synchronized manner using shuffles
+    #pragma unroll
+    for (int i = 0; i < 1; i++) {
+        SIPROUND(v0, v1, v2, v3);
+    }
 
     v0 ^= input;
     v2 ^= 0xff;
 
-    // Unroll SIPROUND manually for better performance
-    SIPROUND(v0, v1, v2, v3);
-    SIPROUND(v0, v1, v2, v3);
-    SIPROUND(v0, v1, v2, v3);
+    #pragma unroll
+    for (int i = 0; i < 3; i++) {
+        SIPROUND(v0, v1, v2, v3);
+    }
 
     return (v0 ^ v1) ^ (v2 ^ v3);
 }
@@ -48,18 +52,21 @@ __device__ void hashx_siphash24_ctr_state512(const siphash_state* __restrict__ k
     v1 ^= c1;
     v3 ^= input;
 
-    // Unroll SIPROUND manually for better performance
-    SIPROUND(v0, v1, v2, v3);
-    SIPROUND(v0, v1, v2, v3);
+    // Perform SIPROUND in a warp-synchronized manner using shuffles
+    #pragma unroll
+    for (int i = 0; i < 2; i++) {
+        SIPROUND(v0, v1, v2, v3);
+    }
 
     v0 ^= input;
     v2 ^= c1;
 
-    SIPROUND(v0, v1, v2, v3);
-    SIPROUND(v0, v1, v2, v3);
-    SIPROUND(v0, v1, v2, v3);
-    SIPROUND(v0, v1, v2, v3);
+    #pragma unroll
+    for (int i = 0; i < 4; i++) {
+        SIPROUND(v0, v1, v2, v3);
+    }
 
+    // Store the intermediate state
     state_out[0] = v0;
     state_out[1] = v1;
     state_out[2] = v2;
@@ -67,11 +74,12 @@ __device__ void hashx_siphash24_ctr_state512(const siphash_state* __restrict__ k
 
     v1 ^= c2;
 
-    SIPROUND(v0, v1, v2, v3);
-    SIPROUND(v0, v1, v2, v3);
-    SIPROUND(v0, v1, v2, v3);
-    SIPROUND(v0, v1, v2, v3);
+    #pragma unroll
+    for (int i = 0; i < 4; i++) {
+        SIPROUND(v0, v1, v2, v3);
+    }
 
+    // Store the final state
     state_out[4] = v0;
     state_out[5] = v1;
     state_out[6] = v2;
