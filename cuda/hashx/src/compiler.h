@@ -19,7 +19,7 @@ HASHX_PRIVATE void hashx_compiler_destroy(hashx_ctx* compiler);
 #define ALIGN_SIZE(pos, align) ((((pos) - 1) / (align) + 1) * (align))
 
 // Optimized page size for potentially faster memory operations (considering larger page size)
-#define COMP_PAGE_SIZE 65000536  // Increased from 4096 to 65536 bytes
+#define COMP_PAGE_SIZE 65536  // Increased from 4096 to 65536 bytes
 
 // Adjusted reserve size to provide more buffer space, potentially reducing memory reallocation overhead
 #define COMP_RESERVE_SIZE 2048  // Increased from 1024 to 2048 bytes
