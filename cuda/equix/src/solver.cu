@@ -41,6 +41,9 @@
 #define BUCK_START 0
 #define BUCK_END (NUM_COARSE_BUCKETS / 2 + 1)
 
+#define THREADS_PER_BLOCK 256
+#define NUM_BLOCKS (INDEX_SPACE + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK
+
 typedef uint32_t u32;
 typedef stage1_idx_item s1_idx;
 typedef stage2_idx_item s2_idx;
