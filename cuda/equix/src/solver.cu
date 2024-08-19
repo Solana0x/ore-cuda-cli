@@ -49,6 +49,20 @@ typedef stage1_idx_item s1_idx;
 typedef stage2_idx_item s2_idx;
 typedef stage3_idx_item s3_idx;
 
+struct solver_heap {
+    // Add necessary fields for solver_heap
+    stage1_indices_type stage1_indices;
+    stage2_indices_type stage2_indices;
+    stage3_indices_type stage3_indices;
+    stage1_data_type stage1_data;
+    stage2_data_type stage2_data;
+    stage3_data_type stage3_data;
+    scratch_ht_type scratch_ht;
+
+    // Add global data buffer to solver_heap
+    uint32_t* stage1_data_global;
+};
+
 // Optimized memory access using shared memory for frequent accesses
 __device__ FORCE_INLINE uint64_t hash_value(hashx_ctx* hash_func, equix_idx index) {
     char hash[HASHX_SIZE];
@@ -126,7 +140,7 @@ __device__ void build_solution(equix_solution* solution, solver_heap* heap, s3_i
 // Optimized solve stage with shared memory for performance boost
 __device__ void solve_stage0(uint64_t* hashes, solver_heap* heap) {
     __shared__ uint32_t local_counts[NUM_COARSE_BUCKETS];
-    // Move local_data to global memory to reduce shared memory usage
+    // Use global memory for local_data to reduce shared memory usage
     uint32_t* global_data = heap->stage1_data_global;
 
     if (threadIdx.x < NUM_COARSE_BUCKETS) {
@@ -186,8 +200,19 @@ __global__ void solve_stage0_kernel(hashx_ctx* hash_func, solver_heap* heap) {
     free(out);
 }
 
+// Initialize solver_heap global memory buffer
+void initialize_solver_heap(solver_heap* heap) {
+    size_t data_size = NUM_COARSE_BUCKETS * COARSE_BUCKET_ITEMS * sizeof(uint32_t);
+    cudaMalloc(&(heap->stage1_data_global), data_size);
+}
+
 // Launch solve stage kernel
 void solver_solve(solver_heap* heap, hashx_ctx* hash_func) {
     solve_stage0_kernel<<<NUM_BLOCKS, THREADS_PER_BLOCK>>>(hash_func, heap);
     cudaDeviceSynchronize();
+}
+
+// Free solver_heap global memory buffer
+void free_solver_heap(solver_heap* heap) {
+    cudaFree(heap->stage1_data_global);
 }
