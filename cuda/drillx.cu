@@ -30,38 +30,31 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     uint8_t seed[40];
     memcpy(seed, challenge, 32);
 
-    for (int i = 0; i < BATCH_SIZE; i += CHUNK_SIZE) {
-    int chunk_size = min(CHUNK_SIZE, BATCH_SIZE - i);
-
-    for (int j = 0; j < chunk_size; j++) {
-        uint64_t nonce_offset = *((uint64_t*)nonce) + i + j;
+    for (int i = 0; i < BATCH_SIZE; i++) {
+        uint64_t nonce_offset = *((uint64_t*)nonce) + i;
         memcpy(seed + 32, &nonce_offset, 8);
-        memPool.ctxs[i + j] = hashx_alloc(HASHX_INTERPRETED);
-        if (!memPool.ctxs[i + j] || !hashx_make(memPool.ctxs[i + j], seed, 40)) {
+        memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
+        if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed, 40)) {
             return;
         }
     }
 
     int threadsPerBlock = 1024;  // Increased number of threads per block
-    int blocksPerGrid = (chunk_size * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
+    int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
 
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs + i, memPool.hash_space + i, NUM_HASHING_ROUNDS);
+    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, NUM_HASHING_ROUNDS);
     CUDA_CHECK(cudaGetLastError());
+
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    for (int j = 0; j < chunk_size; j++) {
-        CUDA_CHECK(cudaMemcpyAsync(out + (i + j) * INDEX_SPACE, memPool.hash_space[i + j], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+    for (int i = 0; i < BATCH_SIZE; i++) {
+        CUDA_CHECK(cudaMemcpyAsync(out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     }
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
-    for (int j = 0; j < chunk_size; j++) {
-        if (memPool.ctxs[i + j]) {
-            hashx_free(memPool.ctxs[i + j]);
-        }
-    }
     CUDA_CHECK(cudaStreamDestroy(stream));
 }
 
