@@ -25,7 +25,7 @@ extern "C" void set_num_hashing_rounds(int rounds) {
 }
 
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
-    const int sub_batch_size = 1024;  // Further reduced sub-batch size
+    const int sub_batch_size = 256;  // Further reduced sub-batch size
     const int num_sub_batches = BATCH_SIZE / sub_batch_size;
 
     // MemoryPool created once and reused
@@ -52,7 +52,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
             }
         }
 
-        int threadsPerBlock = 512; // Adjust according to available resources
+        int threadsPerBlock = 256; // Adjust according to available resources
         int blocksPerGrid = (sub_batch_size * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
 
         do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, NUM_HASHING_ROUNDS);
@@ -60,6 +60,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
 
         CUDA_CHECK(cudaStreamSynchronize(stream));
 
+        // Incremental memory copy to reduce peak memory usage
         for (int i = 0; i < sub_batch_size; i++) {
             CUDA_CHECK(cudaMemcpyAsync(out + (sb * sub_batch_size + i) * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
         }
@@ -69,6 +70,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
 
     CUDA_CHECK(cudaStreamDestroy(stream));
 }
+
 
 __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
     uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
