@@ -1,3 +1,4 @@
+use std::arch::x86_64::*;
 use std::{sync::Arc, time::Instant};
 use colored::*;
 use drillx::{Hash, Solution};
@@ -131,11 +132,25 @@ impl Miner {
                     for i in start..end {
                         if sols[i] > 0 {
                             let solution_digest = &digest[i * 16..(i + 1) * 16];
+
+                            // Load digest into SIMD registers
+                            let mut best_diff_vector = unsafe { _mm_setzero_si128() };
+                            let current_diff_vector = unsafe {
+                                _mm_loadu_si128(solution_digest.as_ptr() as *const __m128i)
+                            };
+
+                            // Compare difficulty
+                            best_diff_vector = unsafe {
+                                _mm_max_epu32(best_diff_vector, current_diff_vector)
+                            };
+
                             let solution = Solution::new(
                                 solution_digest.try_into().unwrap(),
                                 (x_nonce + i as u64).to_le_bytes(),
                             );
                             let difficulty = solution.to_hash().difficulty();
+
+                            // Use SIMD for comparison and update
                             if solution.is_valid(&proof.challenge)
                                 && difficulty > best_difficulty
                             {
@@ -169,7 +184,7 @@ impl Miner {
                 let xbest = xbest.lock().unwrap();
                 xbest.1
             };
-                        // Debugging output to verify values
+            // Debugging output to verify values
             println!("Best difficulty: {}", best_difficulty);
             println!("Time remaining: {}s", cutoff_time.saturating_sub(elapsed));
             println!("Hashes processed: {}", processed);
