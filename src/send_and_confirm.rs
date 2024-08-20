@@ -29,6 +29,7 @@ const CONFIRM_RETRIES: usize = 1;
 
 const CONFIRM_DELAY: u64 = 0;
 const GATEWAY_DELAY: u64 = 300;
+const RESUBMIT_DELAY: u64 = 60_000; // 60 seconds
 
 pub enum ComputeBudget {
     Dynamic,
@@ -41,6 +42,7 @@ impl Miner {
         ixs: &[Instruction],
         compute_budget: ComputeBudget,
         skip_confirm: bool,
+        difficulty: u32,
     ) -> ClientResult<Signature> {
         let progress_bar = spinner::new_progress_bar();
         let signer = self.signer();
@@ -122,33 +124,37 @@ impl Miner {
             }
         }
 
-        // Submit tx - Second Attempt with the same hash
-        attempts = 0;
-        loop {
-            progress_bar.set_message(format!("Submitting transaction again... (attempt {})", attempts));
-            match client.send_transaction_with_config(&tx, send_cfg.clone()).await {
-                Ok(signature) => {
-                    progress_bar.finish_with_message(format!("Sent again: {}", signature));
-                    sig = Some(signature);
-                    break;
+        // Conditional resubmission based on difficulty
+        if difficulty > 18 {
+            std::thread::sleep(Duration::from_millis(RESUBMIT_DELAY)); // Wait for 60 seconds
+
+            attempts = 0;
+            loop {
+                progress_bar.set_message(format!("Submitting transaction again... (attempt {})", attempts));
+                match client.send_transaction_with_config(&tx, send_cfg.clone()).await {
+                    Ok(signature) => {
+                        progress_bar.finish_with_message(format!("Sent again: {}", signature));
+                        sig = Some(signature);
+                        break;
+                    }
+                    Err(err) => {
+                        progress_bar.set_message(format!(
+                            "{}: {}",
+                            "ERROR".bold().red(),
+                            err.kind().to_string()
+                        ));
+                    }
                 }
-                Err(err) => {
-                    progress_bar.set_message(format!(
-                        "{}: {}",
-                        "ERROR".bold().red(),
-                        err.kind().to_string()
-                    ));
+                // Retry
+                std::thread::sleep(Duration::from_millis(GATEWAY_DELAY));
+                attempts += 1;
+                if attempts > GATEWAY_RETRIES {
+                    progress_bar.finish_with_message(format!("{}: Max retries", "ERROR".bold().red()));
+                    return Err(ClientError {
+                        request: None,
+                        kind: ClientErrorKind::Custom("Max retries".into()),
+                    });
                 }
-            }
-            // Retry
-            std::thread::sleep(Duration::from_millis(GATEWAY_DELAY));
-            attempts += 1;
-            if attempts > GATEWAY_RETRIES {
-                progress_bar.finish_with_message(format!("{}: Max retries", "ERROR".bold().red()));
-                return Err(ClientError {
-                    request: None,
-                    kind: ClientErrorKind::Custom("Max retries".into()),
-                });
             }
         }
 
