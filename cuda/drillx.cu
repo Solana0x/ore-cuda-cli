@@ -9,7 +9,7 @@
 #include "hashx/src/context.h"
 
 const int BATCH_SIZE = 8192; 
-const int NUM_HASHING_ROUNDS = 2; 
+const int NUM_HASHING_ROUNDS = 1; 
 
 #define CUDA_CHECK(call) \
     do { \
