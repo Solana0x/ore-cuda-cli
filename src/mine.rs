@@ -20,8 +20,8 @@ use crate::{
 extern "C" {
     pub static BATCH_SIZE: u32;
     pub static NUM_HASHING_ROUNDS: u32;
-    pub fn hash_gpu(challenge: *const u8, nonce: *const u8, out: *mut u64, rounds: u32);
-    pub fn solve_all_stages_gpu(hashes: *const u64, out: *mut u8, sols: *mut u32, num_sets: i32);
+    pub fn hash(challenge: *const u8, nonce: *const u8, out: *mut u64, rounds: u32);
+    pub fn solve_all_stages(hashes: *const u64, out: *mut u8, sols: *mut u32, num_sets: i32);
 }
 
 use std::sync::Mutex;
@@ -44,6 +44,7 @@ impl Miner {
             let solution = Self::find_hash_par_gpu(
                 proof,
                 cutoff_time,
+                args.threads,
                 config.min_difficulty as u32,
             )
             .await;
@@ -69,8 +70,10 @@ impl Miner {
     async fn find_hash_par_gpu(
         proof: Proof,
         cutoff_time: u64,
+        threads: u64,
         min_difficulty: u32,
     ) -> Solution {
+        let threads = num_cpus::get();
         let progress_bar = Arc::new(spinner::new_progress_bar());
         progress_bar.set_message("Mining with GPU...");
 
@@ -87,9 +90,9 @@ impl Miner {
         let xbest = Arc::new(Mutex::new((0, 0, Hash::default())));
 
         loop {
-            // Hash the current batch using the GPU
+            // Hash the current batch
             unsafe {
-                hash_gpu(
+                hash(
                     proof.challenge.as_ptr(),
                     &x_nonce as *const u64 as *const u8,
                     hashes.as_mut_ptr() as *mut u64,
@@ -100,9 +103,9 @@ impl Miner {
             let mut digest = vec![0u8; x_batch_size as usize * 16];
             let mut sols = vec![0u32; x_batch_size as usize];
 
-            // Solve all stages for the current batch using the GPU
+            // Solve all stages for the current batch
             unsafe {
-                solve_all_stages_gpu(
+                solve_all_stages(
                     hashes.as_ptr(),
                     digest.as_mut_ptr(),
                     sols.as_mut_ptr(),
@@ -110,12 +113,12 @@ impl Miner {
                 );
             }
 
-            let chunk_size = x_batch_size as usize / num_cpus::get();
-            let handles: Vec<(u64, u32, Hash)> = (0..num_cpus::get())
+            let chunk_size = x_batch_size as usize / threads;
+            let handles: Vec<(u64, u32, Hash)> = (0..threads)
                 .into_par_iter()
                 .map(|i| {
                     let start = i * chunk_size;
-                    let end = if i + 1 == num_cpus::get() {
+                    let end = if i + 1 == threads {
                         x_batch_size as usize
                     } else {
                         start + chunk_size
@@ -172,13 +175,6 @@ impl Miner {
             println!("Time remaining: {}s", cutoff_time.saturating_sub(elapsed));
             println!("Hashes processed: {}", processed);
 
-            progress_bar.set_message(format!(
-                "Mining with GPU... (Best difficulty: {}, Time Remaining: {}s, Processed: {})",
-                best_difficulty,
-                cutoff_time.saturating_sub(elapsed),
-                processed
-            ));
-
             if timer.elapsed().as_secs() >= cutoff_time {
                 let xbest = xbest.lock().unwrap();
                 if xbest.1 > min_difficulty {
@@ -214,7 +210,7 @@ impl Miner {
         config
             .last_reset_at
             .saturating_add(EPOCH_DURATION)
-            .saturating_sub(5) // Buffer
+            .saturating_sub(0) // Buffer
             .le(&clock.unix_timestamp)
     }
 
