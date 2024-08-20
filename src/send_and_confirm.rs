@@ -91,67 +91,17 @@ impl Miner {
             .unwrap();
         tx.sign(&[&signer], hash);
 
-        // Submit tx
+        // Submit tx - First Attempt
         let mut attempts = 0;
+        let mut sig = None;
         loop {
             progress_bar.set_message(format!("Submitting transaction... (attempt {})", attempts));
-            match client.send_transaction_with_config(&tx, send_cfg).await {
-                Ok(sig) => {
-                    // Skip confirmation
-                    if skip_confirm {
-                        progress_bar.finish_with_message(format!("Sent: {}", sig));
-                        return Ok(sig);
-                    }
-
-                    // Confirm the tx landed
-                    for _ in 0..CONFIRM_RETRIES {
-                        std::thread::sleep(Duration::from_millis(CONFIRM_DELAY));
-                        match client.get_signature_statuses(&[sig]).await {
-                            Ok(signature_statuses) => {
-                                for status in signature_statuses.value {
-                                    if let Some(status) = status {
-                                        if let Some(err) = status.err {
-                                            progress_bar.finish_with_message(format!(
-                                                "{}: {}",
-                                                "ERROR".bold().red(),
-                                                err
-                                            ));
-                                            return Err(ClientError {
-                                                request: None,
-                                                kind: ClientErrorKind::Custom(err.to_string()),
-                                            });
-                                        }
-                                        if let Some(confirmation) = status.confirmation_status {
-                                            match confirmation {
-                                                TransactionConfirmationStatus::Processed => {}
-                                                TransactionConfirmationStatus::Confirmed
-                                                | TransactionConfirmationStatus::Finalized => {
-                                                    progress_bar.finish_with_message(format!(
-                                                        "{} {}",
-                                                        "OK".bold().green(),
-                                                        sig
-                                                    ));
-                                                    return Ok(sig);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Handle confirmation errors
-                            Err(err) => {
-                                progress_bar.set_message(format!(
-                                    "{}: {}",
-                                    "ERROR".bold().red(),
-                                    err.kind().to_string()
-                                ));
-                            }
-                        }
-                    }
+            match client.send_transaction_with_config(&tx, send_cfg.clone()).await {
+                Ok(signature) => {
+                    sig = Some(signature);
+                    progress_bar.finish_with_message(format!("Sent: {}", signature));
+                    break;
                 }
-
-                // Handle submit errors
                 Err(err) => {
                     progress_bar.set_message(format!(
                         "{}: {}",
@@ -160,7 +110,6 @@ impl Miner {
                     ));
                 }
             }
-
             // Retry
             std::thread::sleep(Duration::from_millis(GATEWAY_DELAY));
             attempts += 1;
@@ -172,6 +121,93 @@ impl Miner {
                 });
             }
         }
+
+        // Submit tx - Second Attempt with the same hash
+        attempts = 0;
+        loop {
+            progress_bar.set_message(format!("Submitting transaction again... (attempt {})", attempts));
+            match client.send_transaction_with_config(&tx, send_cfg.clone()).await {
+                Ok(signature) => {
+                    progress_bar.finish_with_message(format!("Sent again: {}", signature));
+                    sig = Some(signature);
+                    break;
+                }
+                Err(err) => {
+                    progress_bar.set_message(format!(
+                        "{}: {}",
+                        "ERROR".bold().red(),
+                        err.kind().to_string()
+                    ));
+                }
+            }
+            // Retry
+            std::thread::sleep(Duration::from_millis(GATEWAY_DELAY));
+            attempts += 1;
+            if attempts > GATEWAY_RETRIES {
+                progress_bar.finish_with_message(format!("{}: Max retries", "ERROR".bold().red()));
+                return Err(ClientError {
+                    request: None,
+                    kind: ClientErrorKind::Custom("Max retries".into()),
+                });
+            }
+        }
+
+        // Skip confirmation
+        if skip_confirm {
+            return Ok(sig.unwrap());
+        }
+
+        // Confirm the tx landed
+        for _ in 0..CONFIRM_RETRIES {
+            std::thread::sleep(Duration::from_millis(CONFIRM_DELAY));
+            match client.get_signature_statuses(&[sig.unwrap()]).await {
+                Ok(signature_statuses) => {
+                    for status in signature_statuses.value {
+                        if let Some(status) = status {
+                            if let Some(err) = status.err {
+                                progress_bar.finish_with_message(format!(
+                                    "{}: {}",
+                                    "ERROR".bold().red(),
+                                    err
+                                ));
+                                return Err(ClientError {
+                                    request: None,
+                                    kind: ClientErrorKind::Custom(err.to_string()),
+                                });
+                            }
+                            if let Some(confirmation) = status.confirmation_status {
+                                match confirmation {
+                                    TransactionConfirmationStatus::Processed => {}
+                                    TransactionConfirmationStatus::Confirmed
+                                    | TransactionConfirmationStatus::Finalized => {
+                                        progress_bar.finish_with_message(format!(
+                                            "{} {}",
+                                            "OK".bold().green(),
+                                            sig.unwrap()
+                                        ));
+                                        return Ok(sig.unwrap());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Handle confirmation errors
+                Err(err) => {
+                    progress_bar.set_message(format!(
+                        "{}: {}",
+                        "ERROR".bold().red(),
+                        err.kind().to_string()
+                    ));
+                }
+            }
+        }
+
+        Err(ClientError {
+            request: None,
+            kind: ClientErrorKind::Custom("Transaction confirmation failed".into()),
+        })
     }
 
     // TODO
