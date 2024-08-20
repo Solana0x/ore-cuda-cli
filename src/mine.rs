@@ -169,12 +169,6 @@ impl Miner {
                 let xbest = xbest.lock().unwrap();
                 xbest.1
             };
-
-            // Debugging output to verify values
-            println!("Best difficulty: {}", best_difficulty);
-            println!("Time remaining: {}s", cutoff_time.saturating_sub(elapsed));
-            println!("Hashes processed: {}", processed);
-
             if timer.elapsed().as_secs() >= cutoff_time {
                 let xbest = xbest.lock().unwrap();
                 if xbest.1 > min_difficulty {
