@@ -1,8 +1,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "drillx.h"
-#include "equix/include/equix.h"
-#include "hashx/include/hashx.h"
+#include "equix.h"
+#include "hashx.h"
 #include "equix/src/context.h"
 #include "equix/src/solver.h"
 #include "equix/src/solver_heap.h"
@@ -45,17 +45,17 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    // Compute the hashes directly on the GPU
     do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, NUM_HASHING_ROUNDS);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
-    CUDA_CHECK(cudaStreamDestroy(stream));
 
-    // Copy the computed hashes directly to the `out` array on the CPU
     for (int i = 0; i < BATCH_SIZE; i++) {
-        CUDA_CHECK(cudaMemcpy(out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpyAsync(out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     }
+
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    CUDA_CHECK(cudaStreamDestroy(stream));
 }
 
 __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
@@ -76,35 +76,29 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
     equix_solution *d_solutions;
     uint32_t *d_num_sols;
 
-    // Allocate memory on the GPU
     CUDA_CHECK(cudaMalloc(&d_hashes, num_sets * INDEX_SPACE * sizeof(uint64_t)));
     CUDA_CHECK(cudaMalloc(&d_heaps, num_sets * sizeof(solver_heap)));
     CUDA_CHECK(cudaMalloc(&d_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution)));
     CUDA_CHECK(cudaMalloc(&d_num_sols, num_sets * sizeof(uint32_t)));
 
-    // Allocate host memory with pinned memory (fast for async transfers)
     equix_solution *h_solutions;
     uint32_t *h_num_sols;
     CUDA_CHECK(cudaHostAlloc(&h_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution), cudaHostAllocDefault));
     CUDA_CHECK(cudaHostAlloc(&h_num_sols, num_sets * sizeof(uint32_t), cudaHostAllocDefault));
 
-    // Copy input hashes from CPU to GPU
     CUDA_CHECK(cudaMemcpy(d_hashes, hashes, num_sets * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
     int threadsPerBlock = 1024; 
     int blocksPerGrid = (num_sets + threadsPerBlock - 1) / threadsPerBlock;
 
-    // Launch the solver kernel
     solve_all_stages_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_hashes, d_heaps, d_solutions, d_num_sols);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Copy results back from GPU to CPU
     CUDA_CHECK(cudaMemcpy(h_solutions, d_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(h_num_sols, d_num_sols, num_sets * sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
-    // Process and store results
     for (int i = 0; i < num_sets; i++) {
         sols[i] = h_num_sols[i];
         if (h_num_sols[i] > 0) {
@@ -112,14 +106,11 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
         }
     }
 
-    // Free GPU memory
     CUDA_CHECK(cudaFree(d_hashes));
     CUDA_CHECK(cudaFree(d_heaps));
     CUDA_CHECK(cudaFree(d_solutions));
     CUDA_CHECK(cudaFree(d_num_sols));
 
-    // Free pinned host memory
     CUDA_CHECK(cudaFreeHost(h_solutions));
     CUDA_CHECK(cudaFreeHost(h_num_sols));
 }
-
