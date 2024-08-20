@@ -1,116 +1,150 @@
-#include <stdint.h>
-#include <stdio.h>
-#include "drillx.h"
-#include "equix.h"
-#include "hashx.h"
-#include "equix/src/context.h"
-#include "equix/src/solver.h"
-#include "equix/src/solver_heap.h"
-#include "hashx/src/context.h"
+/* Copyright (c) 2020 tevador <tevador@gmail.com> */
+/* See LICENSE for licensing information */
 
-const int BATCH_SIZE = 8192; 
-const int NUM_HASHING_ROUNDS = 1; 
+#include "program.h"
+#include "force_inline.h"
+#include "unreachable.h"
+#include "siphash.h"
+#include "hashx_endian.h"
 
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t err = (call); \
-        if (err != cudaSuccess) { \
-            fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
-            exit(err); \
-        } \
-    } while (0)
+#if defined(__SIZEOF_INT128__)
+typedef unsigned __int128 uint128_t;
+typedef __int128 int128_t;
+__device__ static FORCE_INLINE uint64_t umulh(uint64_t a, uint64_t b) {
+	return ((uint128_t)a * b) >> 64;
+	}
+__device__ static FORCE_INLINE int64_t smulh(int64_t a, int64_t b) {
+	return ((int128_t)a * b) >> 64;
+}
+#define HAVE_UMULH
+#define HAVE_SMULH
+#endif
 
-extern "C" void set_num_hashing_rounds(int rounds) {
-    CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &rounds, sizeof(int)));
+#if defined(_MSC_VER)
+#pragma warning (disable : 4146) /* unary minus applied to unsigned type */
+#define HAS_VALUE(X) X ## 0
+#define EVAL_DEFINE(X) HAS_VALUE(X)
+#include <intrin.h>
+#include <stdlib.h>
+
+__device__ static FORCE_INLINE uint64_t rotr64(uint64_t x, unsigned int c) {
+	return _rotr64(x, c);
 }
 
-extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
-    MemoryPool memPool(BATCH_SIZE);
+#define HAVE_ROTR
 
-    uint8_t seed[40];
-    memcpy(seed, challenge, 32);
+#if EVAL_DEFINE(__MACHINEARM64_X64(1))
+__device__ static FORCE_INLINE uint64_t umulh(uint64_t a, uint64_t b) {
+	return __umulh(a, b);
+}
+#define HAVE_UMULH
+#endif
 
-    for (int i = 0; i < BATCH_SIZE; i++) {
-        uint64_t nonce_offset = *((uint64_t*)nonce) + i;
-        memcpy(seed + 32, &nonce_offset, 8);
-        memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
-        if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed, 40)) {
-            return;
-        }
-    }
+#if EVAL_DEFINE(__MACHINEX64(1))
+__device__ static FORCE_INLINE int64_t smulh(int64_t a, int64_t b) {
+	int64_t hi;
+	_mul128(a, b, &hi);
+	return hi;
+}
+#define HAVE_SMULH
+#endif
 
-    int threadsPerBlock = 1024;  // Increased number of threads per block
-    int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
+#endif
 
-    cudaStream_t stream;
-    CUDA_CHECK(cudaStreamCreate(&stream));
+#ifndef HAVE_ROTR
+__device__ static FORCE_INLINE uint64_t rotr64(uint64_t a, unsigned int b) {
+	return (a >> b) | (a << (64 - b));
+}
+#define HAVE_ROTR
+#endif
 
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, NUM_HASHING_ROUNDS);
-    CUDA_CHECK(cudaGetLastError());
+#ifndef HAVE_UMULH
+#define LO(x) ((x)&0xffffffff)
+#define HI(x) ((x)>>32)
+__device__ uint64_t umulh(uint64_t a, uint64_t b) {
+	uint64_t ah = HI(a), al = LO(a);
+	uint64_t bh = HI(b), bl = LO(b);
+	uint64_t x00 = al * bl;
+	uint64_t x01 = al * bh;
+	uint64_t x10 = ah * bl;
+	uint64_t x11 = ah * bh;
+	uint64_t m1 = LO(x10) + LO(x01) + HI(x00);
+	uint64_t m2 = HI(x10) + HI(x01) + LO(x11) + HI(m1);
+	uint64_t m3 = HI(x11) + HI(m2);
 
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+	return (m3 << 32) + LO(m2);
+}
+#undef LO
+#undef HI
+#define HAVE_UMULH
+#endif
 
-    for (int i = 0; i < BATCH_SIZE; i++) {
-        CUDA_CHECK(cudaMemcpyAsync(out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
-    }
+#ifndef HAVE_SMULH
+__device__ int64_t smulh(int64_t a, int64_t b) {
+    int64_t hi = umulh(a, b);
+    hi -= min(a, 0LL) * (b >> 63);
+    hi -= min(b, 0LL) * (a >> 63);
+    return hi;
+}
+#define HAVE_SMULH
+#endif
 
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-    CUDA_CHECK(cudaStreamDestroy(stream));
+__device__ static FORCE_INLINE uint64_t sign_extend_2s_compl(uint32_t x) {
+    return (uint64_t)(int64_t)(int32_t)x;
 }
 
-__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
-    uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
-    if (item < BATCH_SIZE * INDEX_SPACE) {
-        uint32_t batch_idx = item / INDEX_SPACE;
-        uint32_t i = item % INDEX_SPACE;
-
-        for (int round = 0; round < num_hashing_rounds; ++round) {
-            hash_stage0i(ctxs[batch_idx], hash_space[batch_idx], i);
-        }
-    }
-}
-
-extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols, int num_sets) {
-    uint64_t *d_hashes;
-    solver_heap *d_heaps;
-    equix_solution *d_solutions;
-    uint32_t *d_num_sols;
-
-    CUDA_CHECK(cudaMalloc(&d_hashes, num_sets * INDEX_SPACE * sizeof(uint64_t)));
-    CUDA_CHECK(cudaMalloc(&d_heaps, num_sets * sizeof(solver_heap)));
-    CUDA_CHECK(cudaMalloc(&d_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution)));
-    CUDA_CHECK(cudaMalloc(&d_num_sols, num_sets * sizeof(uint32_t)));
-
-    equix_solution *h_solutions;
-    uint32_t *h_num_sols;
-    CUDA_CHECK(cudaHostAlloc(&h_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution), cudaHostAllocDefault));
-    CUDA_CHECK(cudaHostAlloc(&h_num_sols, num_sets * sizeof(uint32_t), cudaHostAllocDefault));
-
-    CUDA_CHECK(cudaMemcpy(d_hashes, hashes, num_sets * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyHostToDevice));
-
-    int threadsPerBlock = 1024; 
-    int blocksPerGrid = (num_sets + threadsPerBlock - 1) / threadsPerBlock;
-
-    solve_all_stages_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_hashes, d_heaps, d_solutions, d_num_sols);
-    CUDA_CHECK(cudaGetLastError());
-
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    CUDA_CHECK(cudaMemcpy(h_solutions, d_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(h_num_sols, d_num_sols, num_sets * sizeof(uint32_t), cudaMemcpyDeviceToHost));
-
-    for (int i = 0; i < num_sets; i++) {
-        sols[i] = h_num_sols[i];
-        if (h_num_sols[i] > 0) {
-            memcpy(out + i * sizeof(equix_solution), &h_solutions[i * EQUIX_MAX_SOLS], sizeof(equix_solution));
-        }
-    }
-
-    CUDA_CHECK(cudaFree(d_hashes));
-    CUDA_CHECK(cudaFree(d_heaps));
-    CUDA_CHECK(cudaFree(d_solutions));
-    CUDA_CHECK(cudaFree(d_num_sols));
-
-    CUDA_CHECK(cudaFreeHost(h_solutions));
-    CUDA_CHECK(cudaFreeHost(h_num_sols));
+__device__ void hashx_program_execute(const hashx_program* program, uint64_t r[8]) {
+	int target = 0;
+	bool branch_enable = true;
+	uint32_t result = 0;
+	int branch_idx = 0;
+	for (int i = 0; i < program->code_size; ++i) {
+		const instruction* instr = &program->code[i];
+		switch (instr->opcode)
+		{
+		case INSTR_UMULH_R:
+			result = r[instr->dst] = umulh(r[instr->dst], r[instr->src]);
+			break;
+		case INSTR_SMULH_R:
+			result = r[instr->dst] = smulh(r[instr->dst], r[instr->src]);
+			break;
+		case INSTR_MUL_R:
+			r[instr->dst] *= r[instr->src];
+			break;
+		case INSTR_SUB_R:
+			r[instr->dst] -= r[instr->src];
+			break;
+		case INSTR_XOR_R:
+			r[instr->dst] ^= r[instr->src];
+			break;
+		case INSTR_ADD_RS:
+			r[instr->dst] += r[instr->src] << instr->imm32;
+			break;
+		case INSTR_ROR_C:
+			r[instr->dst] = rotr64(r[instr->dst], instr->imm32);
+			break;
+		case INSTR_ADD_C:
+			r[instr->dst] += sign_extend_2s_compl(instr->imm32);
+			break;
+		case INSTR_XOR_C:
+			r[instr->dst] ^= sign_extend_2s_compl(instr->imm32);
+			break;
+		case INSTR_TARGET:
+			target = i;
+			break;
+		case INSTR_BRANCH:
+			if (branch_enable && (result & instr->imm32) == 0) {
+				i = target;
+				branch_enable = false;
+#ifdef HASHX_PROGRAM_STATS
+				((hashx_program*)program)->branch_count++;
+				((hashx_program*)program)->branches[branch_idx]++;
+#endif
+			}
+			branch_idx++;
+			break;
+		default:
+			UNREACHABLE;
+		}
+	}
 }
