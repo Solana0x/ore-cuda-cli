@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <vector>
 #include "drillx.h"
 #include "equix.h"
 #include "hashx.h"
@@ -8,8 +9,8 @@
 #include "equix/src/solver_heap.h"
 #include "hashx/src/context.h"
 
-const int BATCH_SIZE = 8192; 
-const int NUM_HASHING_ROUNDS = 1; 
+const int BATCH_SIZE = 8192;
+const int NUM_HASHING_ROUNDS = 1;
 
 #define CUDA_CHECK(call) \
     do { \
@@ -27,14 +28,14 @@ extern "C" void set_num_hashing_rounds(int rounds) {
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     MemoryPool memPool(BATCH_SIZE);
 
-    uint8_t seed[40];
-    memcpy(seed, challenge, 32);
+    std::vector<uint8_t> seed(40);
+    memcpy(seed.data(), challenge, 32);
 
     for (int i = 0; i < BATCH_SIZE; i++) {
         uint64_t nonce_offset = *((uint64_t*)nonce) + i;
-        memcpy(seed + 32, &nonce_offset, 8);
+        memcpy(seed.data() + 32, &nonce_offset, 8);
         memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
-        if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed, 40)) {
+        if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed.data(), 40)) {
             return;
         }
     }
@@ -88,7 +89,7 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
 
     CUDA_CHECK(cudaMemcpy(d_hashes, hashes, num_sets * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-    int threadsPerBlock = 1024; 
+    int threadsPerBlock = 1024;
     int blocksPerGrid = (num_sets + threadsPerBlock - 1) / threadsPerBlock;
 
     solve_all_stages_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_hashes, d_heaps, d_solutions, d_num_sols);
