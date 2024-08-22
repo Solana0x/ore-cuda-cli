@@ -1,4 +1,3 @@
-use std::arch::x86_64::*;
 use std::{sync::Arc, time::Instant};
 use colored::*;
 use drillx::{Hash, Solution};
@@ -21,7 +20,7 @@ use crate::{
 extern "C" {
     pub static BATCH_SIZE: u32;
     pub static NUM_HASHING_ROUNDS: u32;
-    pub fn hash(challenge: *const u8, nonce: *const u8, out: *mut u64, rounds: u32);
+    pub fn hash(challenge: *const u8, nonce: *const u8, out: *mut u64);
     pub fn solve_all_stages(hashes: *const u64, out: *mut u8, sols: *mut u32, num_sets: i32);
 }
 
@@ -47,6 +46,7 @@ impl Miner {
                 cutoff_time,
                 args.threads,
                 config.min_difficulty as u32,
+                &Instant::now(),  // Passing start time reference
             )
             .await;
 
@@ -73,6 +73,7 @@ impl Miner {
         cutoff_time: u64,
         threads: u64,
         min_difficulty: u32,
+        start_time: &Instant,  // Added start_time parameter
     ) -> Solution {
         let threads = num_cpus::get();
         let progress_bar = Arc::new(spinner::new_progress_bar());
@@ -81,6 +82,7 @@ impl Miner {
         let timer = Instant::now();
         let proof = proof.clone();
 
+        const INDEX_SPACE: usize =
         const INDEX_SPACE: usize = 65536;
         let x_batch_size = unsafe { BATCH_SIZE };
 
@@ -97,7 +99,6 @@ impl Miner {
                     proof.challenge.as_ptr(),
                     &x_nonce as *const u64 as *const u8,
                     hashes.as_mut_ptr() as *mut u64,
-                    NUM_HASHING_ROUNDS,
                 );
             }
 
@@ -132,25 +133,11 @@ impl Miner {
                     for i in start..end {
                         if sols[i] > 0 {
                             let solution_digest = &digest[i * 16..(i + 1) * 16];
-
-                            // Load digest into SIMD registers
-                            let mut best_diff_vector = unsafe { _mm_setzero_si128() };
-                            let current_diff_vector = unsafe {
-                                _mm_loadu_si128(solution_digest.as_ptr() as *const __m128i)
-                            };
-
-                            // Compare difficulty
-                            best_diff_vector = unsafe {
-                                _mm_max_epu32(best_diff_vector, current_diff_vector)
-                            };
-
                             let solution = Solution::new(
                                 solution_digest.try_into().unwrap(),
                                 (x_nonce + i as u64).to_le_bytes(),
                             );
                             let difficulty = solution.to_hash().difficulty();
-
-                            // Use SIMD for comparison and update
                             if solution.is_valid(&proof.challenge)
                                 && difficulty > best_difficulty
                             {
@@ -179,17 +166,34 @@ impl Miner {
             x_nonce += x_batch_size as u64;
             processed += x_batch_size as usize;
 
+            // Hashes per second calculation
+            let elapsed_time = start_time.elapsed().as_secs_f64();
+            let hashes_per_second = processed as f64 / elapsed_time;
+
             let elapsed = timer.elapsed().as_secs();
             let best_difficulty = {
                 let xbest = xbest.lock().unwrap();
                 xbest.1
             };
+
+            let time_remaining = cutoff_time.saturating_sub(elapsed);
+
             // Debugging output to verify values
             println!("Best difficulty: {}", best_difficulty);
-            println!("Time remaining: {}s", cutoff_time.saturating_sub(elapsed));
+            println!("Time remaining: {}s", time_remaining);
             println!("Hashes processed: {}", processed);
+            println!("Hashes per second: {:.2}", hashes_per_second);
 
-            if timer.elapsed().as_secs() >= cutoff_time {
+            progress_bar.set_message(format!(
+                "Mining with GPU... (Best difficulty: {}, Time Remaining: {}s, Processed: {}, Hashes per second: {:.2})",
+                best_difficulty,
+                time_remaining,
+                processed,
+                hashes_per_second
+            ));
+
+            // Check if time limit is reached
+            if elapsed_time >= cutoff_time as f64 {
                 let xbest = xbest.lock().unwrap();
                 if xbest.1 > min_difficulty {
                     break;
@@ -224,7 +228,7 @@ impl Miner {
         config
             .last_reset_at
             .saturating_add(EPOCH_DURATION)
-            .saturating_sub(0) // Buffer
+            .saturating_sub(5) // Buffer
             .le(&clock.unix_timestamp)
     }
 
