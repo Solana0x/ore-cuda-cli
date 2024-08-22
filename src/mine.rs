@@ -82,7 +82,6 @@ impl Miner {
         let timer = Instant::now();
         let proof = proof.clone();
 
-        const INDEX_SPACE: usize = 8;
         const INDEX_SPACE: usize = 65536;
         let x_batch_size = unsafe { BATCH_SIZE };
 
