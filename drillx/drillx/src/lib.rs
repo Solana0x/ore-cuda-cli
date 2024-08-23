@@ -2,6 +2,7 @@ pub use equix;
 use equix::SolutionArray;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
+use rayon::prelude::*; // Import rayon for parallelism
 
 /// Generates a new Drillx hash from a challenge and nonce.
 #[inline(always)]
@@ -28,7 +29,6 @@ pub fn hash_with_memory(
 }
 
 /// Generates drillx hashes from a challenge and nonce using pre-allocated memory.
-
 #[inline(always)]
 pub fn hashes_with_memory(
     memory: &mut equix::SolverMemory,
@@ -37,13 +37,16 @@ pub fn hashes_with_memory(
 ) -> Vec<Hash> {
     let mut hashes: Vec<Hash> = Vec::with_capacity(7);
     if let Ok(solutions) = digests_with_memory(memory, challenge, nonce) {
-        for solution in solutions {
-            let digest = solution.to_bytes();
-            hashes.push(Hash {
-                d: digest,
-                h: hashv(&digest, nonce),
-            });
-        }
+        hashes = solutions
+            .par_iter() // Use parallel iterator
+            .map(|solution| {
+                let digest = solution.to_bytes();
+                Hash {
+                    d: digest,
+                    h: hashv(&digest, nonce),
+                }
+            })
+            .collect();
     }
     hashes
 }
@@ -65,7 +68,6 @@ fn digest(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<[u8; 16], DrillxError
     if solutions.is_empty() {
         return Err(DrillxError::NoSolutions);
     }
-    // SAFETY: The equix solver guarantees that the first solution is always valid
     let solution = unsafe { solutions.get_unchecked(0) };
     Ok(solution.to_bytes())
 }
@@ -86,7 +88,6 @@ fn digest_with_memory(
     if solutions.is_empty() {
         return Err(DrillxError::NoSolutions);
     }
-    // SAFETY: The equix solver guarantees that the first solution is always valid
     let solution = unsafe { solutions.get_unchecked(0) };
     Ok(solution.to_bytes())
 }
