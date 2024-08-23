@@ -25,6 +25,9 @@ gpu = ["cc"]
 sha3 = { workspace = true }
 equix = { workspace = true }
 serde = { workspace = true }
+bytemuck = "1.17.0"
+tokio = "1.39.3"
+rayon = "1.10.0"
 solana-program = { workspace = true, optional = true }
 strum = { workspace = true }
 
