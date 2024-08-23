@@ -9,8 +9,8 @@
 #include "equix/src/solver_heap.h"
 #include "hashx/src/context.h"
 
-const int BATCH_SIZE = 8192;
-__device__ __constant__ int NUM_HASHING_ROUNDS = 1;  // Use __constant__ memory for NUM_HASHING_ROUNDS
+const int BATCH_SIZE = 16384;
+__constant__ int NUM_HASHING_ROUNDS = 1;  // Use __constant__ memory for NUM_HASHING_ROUNDS
 
 #define CUDA_CHECK(call) \
     do { \
@@ -22,6 +22,7 @@ __device__ __constant__ int NUM_HASHING_ROUNDS = 1;  // Use __constant__ memory 
     } while (0)
 
 extern "C" void set_num_hashing_rounds(int rounds) {
+    // Updated to set the constant variable in device code
     CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &rounds, sizeof(int)));
 }
 
