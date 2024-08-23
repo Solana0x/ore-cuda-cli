@@ -1,6 +1,6 @@
 [package]
 name = "ore-cli"
-version = "2.3.1"
+version = "2.3.0"
 description = "A command line interface for the ORE cryptocurrency mining."
 license = "Apache-2.0"
 edition = "2021"
@@ -22,8 +22,8 @@ cached = "0.46.1"
 chrono = "0.4.38"
 clap = { version = "4.4.12", features = ["derive"] }
 colored = "2.0"
-# drillx = { path = "drillx/drillx" }
-drillx = "2.1.0"
+drillx = { path = "drillx/drillx" }
+# drillx = "2.1.0"
 equix = "0.1.6"
 futures = "0.3.30"
 num_cpus = "1.16.0"
@@ -47,7 +47,7 @@ rayon = "1.5.1"
 cc = { version = "1.0", optional = true }
 
 [patch.crates-io]
-# drillx = { path = "drillx/drillx" }
+drillx = { path = "drillx/drillx" }
 
 [profile.release]
 opt-level = 3   # Optimize for binary size. You can use "3" for full optimizations if binary size isn't an issue.
