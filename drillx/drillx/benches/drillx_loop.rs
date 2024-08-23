@@ -6,7 +6,7 @@ fn drillx_loop(nonces: u64) {
     let mut memory = drillx::equix::SolverMemory::new();
     let challenge = [255; 32];
     for nonce in 0..nonces {
-        drillx::hash_with_memory(&mut memory, &challenge, &nonce.to_le_bytes()).ok();
+        drillx::hashes_with_memory(&mut memory, &challenge, &nonce.to_le_bytes()).ok();
     }
 }
 
