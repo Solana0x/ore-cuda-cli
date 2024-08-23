@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 pub use equix;
 use equix::SolutionArray;
 #[cfg(not(feature = "solana"))]
@@ -24,17 +26,19 @@ pub async fn hash_async(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, D
 /// Generates a new Drillx hash using pre-allocated memory asynchronously.
 #[inline(always)]
 pub async fn hash_with_memory_async(
-    memory: &mut equix::SolverMemory,
+    memory: Arc<Mutex<equix::SolverMemory>>, // Use Arc<Mutex<_>> to share safely
     challenge: &[u8; 32],
     nonce: &[u8; 8],
 ) -> Result<Hash, DrillxError> {
     let challenge = *challenge; // Copy the data to avoid borrowing issues
     let nonce = *nonce;         // Copy the data to avoid borrowing issues
-    let memory = memory.clone(); // Clone memory for thread safety
 
-    let digest_result = task::spawn_blocking(move || digest_with_memory(&mut memory.clone(), &challenge, &nonce))
-        .await
-        .map_err(|_| DrillxError::JoinError)?; // Handle JoinError
+    let digest_result = task::spawn_blocking(move || {
+        let mut memory = memory.lock().unwrap(); // Lock the memory for safe access
+        digest_with_memory(&mut memory, &challenge, &nonce)
+    })
+    .await
+    .map_err(|_| DrillxError::JoinError)?; // Handle JoinError
 
     let digest = digest_result?; // Handle DrillxError from digest_with_memory function
     Ok(Hash {
