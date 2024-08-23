@@ -9,9 +9,15 @@ use std::convert::Infallible;
 /// Generates a new Drillx hash from a challenge and nonce asynchronously.
 #[inline(always)]
 pub async fn hash_async(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> {
-    task::spawn_blocking(move || digest(challenge, nonce))
+    let digest_result = task::spawn_blocking(move || digest(challenge, nonce))
         .await
-        .map_err(|_| DrillxError::JoinError)?? // Map JoinError to DrillxError
+        .map_err(|_| DrillxError::JoinError)?; // Handle JoinError
+
+    let digest = digest_result?; // Handle DrillxError from digest function
+    Ok(Hash {
+        d: digest,
+        h: hashv(&digest, nonce),
+    })
 }
 
 /// Generates a new Drillx hash using pre-allocated memory asynchronously.
@@ -21,10 +27,18 @@ pub async fn hash_with_memory_async(
     challenge: &[u8; 32],
     nonce: &[u8; 8],
 ) -> Result<Hash, DrillxError> {
-    task::spawn_blocking(move || digest_with_memory(memory, challenge, nonce))
+    let digest_result = task::spawn_blocking(move || digest_with_memory(memory, challenge, nonce))
         .await
-        .map_err(|_| DrillxError::JoinError)?? // Map JoinError to DrillxError
+        .map_err(|_| DrillxError::JoinError)?; // Handle JoinError
+
+    let digest = digest_result?; // Handle DrillxError from digest_with_memory function
+    Ok(Hash {
+        d: digest,
+        h: hashv(&digest, nonce),
+    })
 }
+
+// The rest of the code remains unchanged
 
 /// Generates Drillx hashes from a challenge and nonce using pre-allocated memory and parallel processing.
 #[inline(always)]
