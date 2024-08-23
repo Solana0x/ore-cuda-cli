@@ -17,7 +17,7 @@ use spl_associated_token_account::get_associated_token_address;
 use tokio::time::sleep;
 
 pub const BLOCKHASH_QUERY_RETRIES: usize = 5;
-pub const BLOCKHASH_QUERY_DELAY: u64 = 500;
+pub const BLOCKHASH_QUERY_DELAY: u64 = 50;
 
 pub async fn _get_treasury(client: &RpcClient) -> Treasury {
     let data = client
