@@ -1,7 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use drillx::Solution;
 use solana_program::{
-    self,
     account_info::AccountInfo,
     declare_id,
     entrypoint::ProgramResult,
@@ -22,19 +21,19 @@ pub fn process_instruction(
     data: &[u8],
 ) -> ProgramResult {
     let args = Args::try_from_bytes(data)?;
-    let [_signer] = accounts else {
+    if accounts.len() < 1 {
         return Err(ProgramError::NotEnoughAccountKeys);
-    };
+    }
 
     // Prove that the solution is valid.
-    let challenge = [255; 32];
+    static CHALLENGE: [u8; 32] = [255; 32];
 
     let solution = Solution {
         d: args.digest,
         n: args.nonce,
     };
 
-    if !solution.is_valid(&challenge) {
+    if !solution.is_valid(&CHALLENGE) {
         return Err(ProgramError::Custom(0));
     }
 
@@ -42,7 +41,7 @@ pub fn process_instruction(
         return Err(ProgramError::Custom(1));
     }
 
-    sol_log_compute_units();
+    sol_log_compute_units(); // Log the compute units used, useful for debugging and optimization.
     Ok(())
 }
 
@@ -55,8 +54,7 @@ pub fn verify(signer: Pubkey, difficulty: u64, nonce: [u8; 8], digest: [u8; 16])
             digest,
             nonce,
         }
-        .to_bytes()
-        .to_vec(),
+        .to_bytes(), // Directly convert to bytes slice
     }
 }
 
@@ -74,6 +72,6 @@ impl Args {
     }
 
     fn try_from_bytes(data: &[u8]) -> Result<&Self, ProgramError> {
-        bytemuck::try_from_bytes::<Self>(&data).or(Err(ProgramError::InvalidAccountData))
+        bytemuck::try_from_bytes(data).map_err(|_| ProgramError::InvalidAccountData)
     }
 }
