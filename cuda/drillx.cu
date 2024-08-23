@@ -1,3 +1,10 @@
+optimise the below code for better memory manamenget !! 
+ CUDA error at cuda/drillx.cu:81: out of memory
+
+rewrite the code to use the memory efficiently ! find the bottelnecks and fix it !
+
+find the bottelnecks in the below cuda code (drillx.cu) code ! and optimise it 
+
 #include <stdint.h>
 #include <stdio.h>
 #include <vector>
@@ -9,8 +16,8 @@
 #include "equix/src/solver_heap.h"
 #include "hashx/src/context.h"
 
-const int BATCH_SIZE = 8192;
-__device__ __constant__ int NUM_HASHING_ROUNDS;
+const int BATCH_SIZE = 16384;
+const int NUM_HASHING_ROUNDS = 1;
 
 #define CUDA_CHECK(call) \
     do { \
@@ -40,7 +47,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
         }
     }
 
-    int threadsPerBlock = 256;  // Adjusted for optimal occupancy
+    int threadsPerBlock = 1024;  // Increased number of threads per block
     int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
 
     cudaStream_t stream;
@@ -51,19 +58,11 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    // Optimize memory transfer using cudaMemcpyAsync with pinned memory
-    uint64_t *host_out;
-    CUDA_CHECK(cudaHostAlloc(&host_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaHostAllocDefault));
-    
     for (int i = 0; i < BATCH_SIZE; i++) {
-        CUDA_CHECK(cudaMemcpyAsync(host_out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaMemcpyAsync(out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     }
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    memcpy(out, host_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t)); // Single copy back to output array
-
-    CUDA_CHECK(cudaFreeHost(host_out));
     CUDA_CHECK(cudaStreamDestroy(stream));
 }
 
@@ -97,7 +96,7 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
 
     CUDA_CHECK(cudaMemcpy(d_hashes, hashes, num_sets * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-    int threadsPerBlock = 256; // Adjusted for optimal occupancy
+    int threadsPerBlock = 1024;
     int blocksPerGrid = (num_sets + threadsPerBlock - 1) / threadsPerBlock;
 
     solve_all_stages_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_hashes, d_heaps, d_solutions, d_num_sols);
