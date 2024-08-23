@@ -37,7 +37,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
         memcpy(seed.data() + 32, &nonce_offset, 8);
         memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
         if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed.data(), 40)) {
-            continue;
+            break;
         }
     }
 
