@@ -217,7 +217,7 @@ impl Miner {
         config
             .last_reset_at
             .saturating_add(EPOCH_DURATION)
-            .saturating_sub(5) // Buffer
+            .saturating_sub(0) // Buffer
             .le(&clock.unix_timestamp)
     }
 
