@@ -115,66 +115,70 @@ impl Miner {
             }
 
             let chunk_size = x_batch_size as usize / threads;
+            // Update the best hash search loop to evaluate all hashes and find the best difficulty
             let handles: Vec<(u64, u32, Hash)> = (0..threads)
                 .into_par_iter()
                 .map(|i| {
                     let start = i * chunk_size;
                     let end = if i + 1 == threads {
                         x_batch_size as usize
-                    } else {
-                        start + chunk_size
-                    };
-
-                    let mut best_nonce = 0;
-                    let mut best_difficulty = 0;
-                    let mut best_hash = Hash::default();
-
-                    for i in start..end {
-                        if sols[i] > 0 {
-                            let solution_digest = &digest[i * 16..(i + 1) * 16];
-
-                            // Load digest into SIMD registers
-                            let mut best_diff_vector = unsafe { _mm_setzero_si128() };
-                            let current_diff_vector = unsafe {
-                                _mm_loadu_si128(solution_digest.as_ptr() as *const __m128i)
+                        } else {
+                            start + chunk_size
                             };
-
-                            // Compare difficulty
-                            best_diff_vector = unsafe {
-                                _mm_max_epu32(best_diff_vector, current_diff_vector)
-                            };
-
-                            let solution = Solution::new(
-                                solution_digest.try_into().unwrap(),
-                                (x_nonce + i as u64).to_le_bytes(),
-                            );
-                            let difficulty = solution.to_hash().difficulty();
-
-                            // Use SIMD for comparison and update
-                            if solution.is_valid(&proof.challenge)
-                                && difficulty > best_difficulty
-                            {
-                                best_nonce = u64::from_le_bytes(solution.n);
-                                best_difficulty = difficulty;
-                                best_hash = solution.to_hash();
+                            
+                            let mut best_nonce = 0;
+                            let mut best_difficulty = 0;
+                            let mut best_hash = Hash::default();
+                            
+                            // Iterate over each hash in the current batch
+                            
+                        for i in start..end {
+                            if sols[i] > 0 {
+                                let solution_digest = &digest[i * 16..(i + 1) * 16];
+                                
+                                // Load digest into SIMD registers
+                                let mut best_diff_vector = unsafe { _mm_setzero_si128() };
+                                let current_diff_vector = unsafe {
+                                    _mm_loadu_si128(solution_digest.as_ptr() as *const __m128i)
+                                };
+                                
+                                // Compare difficulty using SIMD
+                                best_diff_vector = unsafe {
+                                    _mm_max_epu32(best_diff_vector, current_diff_vector)
+                                };
+                                
+                                let solution = Solution::new(
+                                    solution_digest.try_into().unwrap(),
+                                    (x_nonce + i as u64).to_le_bytes(),
+                                );
+                                
+                                let difficulty = solution.to_hash().difficulty();
+                                
+                                // Compare current hash's difficulty to the best difficulty found so far
+                                
+                                if difficulty > best_difficulty {
+                                    
+                                    best_nonce = u64::from_le_bytes(solution.n);
+                                    best_difficulty = difficulty;
+                                    best_hash = solution.to_hash();
+                                }
                             }
                         }
-                    }
-
                     (best_nonce, best_difficulty, best_hash)
                 })
-                .collect();
-
+            .collect();
+            
             {
                 let mut xbest = xbest.lock().unwrap();
                 let best_result = handles
-                    .into_iter()
-                    .max_by_key(|&(_, diff, _)| diff)
-                    .unwrap();
+                .into_iter()
+                .max_by_key(|&(_, diff, _)| diff)
+                .unwrap();
                 if best_result.1 > xbest.1 {
                     *xbest = best_result;
                 }
             }
+
 
             x_nonce += x_batch_size as u64;
             processed += x_batch_size as usize;
