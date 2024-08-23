@@ -8,7 +8,6 @@ use ore_api::{
     state::{Config, Proof, Treasury},
 };
 use ore_utils::AccountDeserialize;
-use serde::Deserialize;
 use solana_client::client_error::{ClientError, ClientErrorKind};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_program::{pubkey::Pubkey, sysvar};
