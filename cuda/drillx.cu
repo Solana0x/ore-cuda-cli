@@ -1,10 +1,3 @@
-optimise the below code for better memory manamenget !! 
- CUDA error at cuda/drillx.cu:81: out of memory
-
-rewrite the code to use the memory efficiently ! find the bottelnecks and fix it !
-
-find the bottelnecks in the below cuda code (drillx.cu) code ! and optimise it 
-
 #include <stdint.h>
 #include <stdio.h>
 #include <vector>
