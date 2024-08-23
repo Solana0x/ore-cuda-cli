@@ -1,6 +1,6 @@
 #include <cuda_runtime.h>
 #include "solver.h"
-#include "context.h"  // Make sure this includes the correct definitions
+#include "context.h"
 #include "solver_heap.h"
 #include <../../hashx/src/hashx_endian.h>
 #include <string.h>
