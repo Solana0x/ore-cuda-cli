@@ -1,56 +1,49 @@
+/* Copyright (c) 2020 tevador <tevador@gmail.com> */
+/* See LICENSE for licensing information */
+
 #include <stdlib.h>
-#include <string.h>
-#include "../include/hashx.h"
+#include <../include/equix.h>
 #include "context.h"
-#include "compiler.h"
-#include "program.h"
+#include "solver_heap.h"
 
-#define STRINGIZE_INNER(x) #x
-#define STRINGIZE(x) STRINGIZE_INNER(x)
+// TODO hash_func context can be removed from here
 
-#ifndef HASHX_SALT
-#define HASHX_SALT HashX v1
-#endif
-
-// The definition remains here
-__device__ const blake2b_param hashx_blake2_params = {
-    64, 0, 1, 1, 0, 0, 0, 0, { 0 }, STRINGIZE(HASHX_SALT), { 0 }
-};
-
-hashx_ctx* hashx_alloc(hashx_type type) {
-    hashx_ctx* ctx;
-    cudaMallocManaged(&ctx, sizeof(hashx_ctx));
+equix_ctx* equix_alloc(equix_ctx_flags flags) {
+    equix_ctx* ctx = NULL;
     
-    ctx->code = NULL;
-    if (type & HASHX_COMPILED) {
-        if (!hashx_compiler_init(ctx)) {
-            cudaFree(ctx);
+    // Allocate unified memory for equix_ctx
+    if (cudaHostAlloc(&ctx, sizeof(equix_ctx), cudaHostAllocDefault) != cudaSuccess) {
+        return NULL; // Directly return NULL on failure
+    }
+    
+    // Initialize ctx to avoid potential issues
+    memset(ctx, 0, sizeof(equix_ctx));
+    
+    ctx->flags = flags; // Set flags early to reflect the actual state
+    
+    ctx->hash_func = hashx_alloc(flags & EQUIX_CTX_COMPILE ?
+        HASHX_COMPILED : HASHX_INTERPRETED);
+    if (ctx->hash_func == NULL || ctx->hash_func == HASHX_NOTSUPP) {
+        equix_free(ctx); // Free resources before returning
+        return NULL; // Use NULL directly for clarity
+    }
+    
+    if (flags & EQUIX_CTX_SOLVE) {
+        if (cudaHostAlloc(&ctx->heap, sizeof(solver_heap), cudaHostAllocDefault) != cudaSuccess) {
+            equix_free(ctx); // Free resources before returning
             return NULL;
         }
-        ctx->type = HASHX_COMPILED;
-    }
-    else {
-        cudaMallocManaged(&ctx->program, sizeof(hashx_program));
-        ctx->type = HASHX_INTERPRETED;
     }
     
-#ifdef HASHX_BLOCK_MODE
-    memcpy(&ctx->params, &hashx_blake2_params, 32);
-#endif
-
     return ctx;
 }
 
-void hashx_free(hashx_ctx* ctx) {
-    if (ctx != NULL && ctx != HASHX_NOTSUPP) {
-        if (ctx->code != NULL) {
-            if (ctx->type & HASHX_COMPILED) {
-                hashx_compiler_destroy(ctx);
-            }
-            else {
-                cudaFree(ctx->program);
-            }
-        }
-        cudaFree(ctx);
-    }
+void equix_free(equix_ctx* ctx) {
+	if (ctx != NULL && ctx != EQUIX_NOTSUPP) {
+		if (ctx->flags & EQUIX_CTX_SOLVE) {
+			cudaFreeHost(ctx->heap);
+		}
+		hashx_free(ctx->hash_func);
+		cudaFreeHost(ctx);
+	}
 }
