@@ -2,49 +2,55 @@ pub use equix;
 use equix::SolutionArray;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
+use rayon::prelude::*;
+use tokio::task;
 
-/// Generates a new Drillx hash from a challenge and nonce.
+/// Generates a new Drillx hash from a challenge and nonce asynchronously.
 #[inline(always)]
-pub fn hash(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> {
-    let digest = digest(challenge, nonce)?;
-    Ok(Hash {
-        d: digest,
-        h: hashv(&digest, nonce),
-    })
+pub async fn hash_async(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> {
+    task::spawn_blocking(move || digest(challenge, nonce))
+        .await?
+        .map(|digest| Hash {
+            d: digest,
+            h: hashv(&digest, nonce),
+        })
 }
 
-/// Generates a new Drillx hash using pre-allocated memory.
+/// Generates a new Drillx hash using pre-allocated memory asynchronously.
 #[inline(always)]
-pub fn hash_with_memory(
+pub async fn hash_with_memory_async(
     memory: &mut equix::SolverMemory,
     challenge: &[u8; 32],
     nonce: &[u8; 8],
 ) -> Result<Hash, DrillxError> {
-    let digest = digest_with_memory(memory, challenge, nonce)?;
+    let digest = task::spawn_blocking(move || digest_with_memory(memory, challenge, nonce)).await??;
     Ok(Hash {
         d: digest,
         h: hashv(&digest, nonce),
     })
 }
 
-/// Generates drillx hashes from a challenge and nonce using pre-allocated memory.
+/// Generates Drillx hashes from a challenge and nonce using pre-allocated memory and parallel processing.
 #[inline(always)]
-pub fn hashes_with_memory(
+pub fn hashes_with_memory_parallel(
     memory: &mut equix::SolverMemory,
     challenge: &[u8; 32],
     nonce: &[u8; 8],
 ) -> Vec<Hash> {
-    let mut hashes = Vec::with_capacity(7); // Avoids resizing
     if let Ok(solutions) = digests_with_memory(memory, challenge, nonce) {
-        for solution in solutions.iter() {
-            let digest = solution.to_bytes();
-            hashes.push(Hash {
-                d: digest,
-                h: hashv(&digest, nonce),
-            });
-        }
+        solutions
+            .par_iter()
+            .map(|solution| {
+                let digest = solution.to_bytes();
+                Hash {
+                    d: digest,
+                    h: hashv(&digest, nonce),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
     }
-    hashes
 }
 
 /// Concatenates a challenge and nonce into a single buffer.
@@ -80,7 +86,7 @@ fn digest_with_memory(
     solutions.get(0).map_or(Err(DrillxError::NoSolutions), |s| Ok(s.to_bytes()))
 }
 
-/// Constructs a keccak digest from a challenge and nonce using equix hashes and pre-allocated memory.
+/// Constructs a Keccak digest from a challenge and nonce using equix hashes and pre-allocated memory.
 #[inline(always)]
 fn digests_with_memory(
     memory: &mut equix::SolverMemory,
