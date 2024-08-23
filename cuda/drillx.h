@@ -8,7 +8,7 @@
 #include "hashx/src/context.h"
 
 extern const int BATCH_SIZE;
-extern const int NUM_HASHING_ROUNDS;
+// Removed the extern declaration for NUM_HASHING_ROUNDS
 
 #define CUDA_CHECK(call) \
     do { \
@@ -45,4 +45,3 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
 __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds);
 
 #endif
-
