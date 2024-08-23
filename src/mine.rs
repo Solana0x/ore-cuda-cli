@@ -1,4 +1,3 @@
-use std::arch::x86_64::*;
 use std::{sync::Arc, time::Instant};
 use colored::*;
 use drillx::{Hash, Solution};
@@ -115,70 +114,52 @@ impl Miner {
             }
 
             let chunk_size = x_batch_size as usize / threads;
-            // Update the best hash search loop to evaluate all hashes and find the best difficulty
             let handles: Vec<(u64, u32, Hash)> = (0..threads)
                 .into_par_iter()
                 .map(|i| {
                     let start = i * chunk_size;
                     let end = if i + 1 == threads {
                         x_batch_size as usize
-                        } else {
-                            start + chunk_size
-                            };
-                            
-                            let mut best_nonce = 0;
-                            let mut best_difficulty = 0;
-                            let mut best_hash = Hash::default();
-                            
-                            // Iterate over each hash in the current batch
-                            
-                        for i in start..end {
-                            if sols[i] > 0 {
-                                let solution_digest = &digest[i * 16..(i + 1) * 16];
-                                
-                                // Load digest into SIMD registers
-                                let mut best_diff_vector = unsafe { _mm_setzero_si128() };
-                                let current_diff_vector = unsafe {
-                                    _mm_loadu_si128(solution_digest.as_ptr() as *const __m128i)
-                                };
-                                
-                                // Compare difficulty using SIMD
-                                best_diff_vector = unsafe {
-                                    _mm_max_epu32(best_diff_vector, current_diff_vector)
-                                };
-                                
-                                let solution = Solution::new(
-                                    solution_digest.try_into().unwrap(),
-                                    (x_nonce + i as u64).to_le_bytes(),
-                                );
-                                
-                                let difficulty = solution.to_hash().difficulty();
-                                
-                                // Compare current hash's difficulty to the best difficulty found so far
-                                
-                                if difficulty > best_difficulty {
-                                    
-                                    best_nonce = u64::from_le_bytes(solution.n);
-                                    best_difficulty = difficulty;
-                                    best_hash = solution.to_hash();
-                                }
+                    } else {
+                        start + chunk_size
+                    };
+
+                    let mut best_nonce = 0;
+                    let mut best_difficulty = 0;
+                    let mut best_hash = Hash::default();
+
+                    for i in start..end {
+                        if sols[i] > 0 {
+                            let solution_digest = &digest[i * 16..(i + 1) * 16];
+                            let solution = Solution::new(
+                                solution_digest.try_into().unwrap(),
+                                (x_nonce + i as u64).to_le_bytes(),
+                            );
+                            let difficulty = solution.to_hash().difficulty();
+                            if solution.is_valid(&proof.challenge)
+                                && difficulty > best_difficulty
+                            {
+                                best_nonce = u64::from_le_bytes(solution.n);
+                                best_difficulty = difficulty;
+                                best_hash = solution.to_hash();
                             }
                         }
+                    }
+
                     (best_nonce, best_difficulty, best_hash)
                 })
-            .collect();
-            
+                .collect();
+
             {
                 let mut xbest = xbest.lock().unwrap();
                 let best_result = handles
-                .into_iter()
-                .max_by_key(|&(_, diff, _)| diff)
-                .unwrap();
+                    .into_iter()
+                    .max_by_key(|&(_, diff, _)| diff)
+                    .unwrap();
                 if best_result.1 > xbest.1 {
                     *xbest = best_result;
                 }
             }
-
 
             x_nonce += x_batch_size as u64;
             processed += x_batch_size as usize;
@@ -188,10 +169,18 @@ impl Miner {
                 let xbest = xbest.lock().unwrap();
                 xbest.1
             };
-            // Debugging output to verify values pause debug stuff for now !
+
+            // Debugging output to verify values
             println!("Best difficulty: {}", best_difficulty);
             println!("Time remaining: {}s", cutoff_time.saturating_sub(elapsed));
             println!("Hashes processed: {}", processed);
+
+            progress_bar.set_message(format!(
+                "Mining with GPU... (Best difficulty: {}, Time Remaining: {}s, Processed: {})",
+                best_difficulty,
+                cutoff_time.saturating_sub(elapsed),
+                processed
+            ));
 
             if timer.elapsed().as_secs() >= cutoff_time {
                 let xbest = xbest.lock().unwrap();
@@ -228,7 +217,7 @@ impl Miner {
         config
             .last_reset_at
             .saturating_add(EPOCH_DURATION)
-            .saturating_sub(0) // Buffer
+            .saturating_sub(5) // Buffer
             .le(&clock.unix_timestamp)
     }
 
