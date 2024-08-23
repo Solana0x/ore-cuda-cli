@@ -8,6 +8,7 @@
 #include "hashx/src/context.h"
 
 extern const int BATCH_SIZE;
+extern const int NUM_HASHING_ROUNDS;
 // Removed the extern declaration for NUM_HASHING_ROUNDS
 
 #define CUDA_CHECK(call) \
