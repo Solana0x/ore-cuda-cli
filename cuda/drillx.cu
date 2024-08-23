@@ -9,7 +9,7 @@
 #include "equix/src/solver_heap.h"
 #include "hashx/src/context.h"
 
-const int BATCH_SIZE = 16384;
+const int BATCH_SIZE = 8192;
 __device__ __constant__ int NUM_HASHING_ROUNDS;
 
 #define CUDA_CHECK(call) \
@@ -43,45 +43,28 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     int threadsPerBlock = 256;  // Adjusted for optimal occupancy
     int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
 
-    cudaStream_t streams[2];
-    for (int i = 0; i < 2; ++i) {
-        CUDA_CHECK(cudaStreamCreate(&streams[i]));
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreate(&stream));
+
+    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, NUM_HASHING_ROUNDS);
+    CUDA_CHECK(cudaGetLastError());
+
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    // Optimize memory transfer using cudaMemcpyAsync with pinned memory
+    uint64_t *host_out;
+    CUDA_CHECK(cudaHostAlloc(&host_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaHostAllocDefault));
+    
+    for (int i = 0; i < BATCH_SIZE; i++) {
+        CUDA_CHECK(cudaMemcpyAsync(host_out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     }
 
-    // Allocate pinned host memory for async data transfer
-    uint64_t *host_out[2];
-    for (int i = 0; i < 2; ++i) {
-        CUDA_CHECK(cudaHostAlloc(&host_out[i], BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaHostAllocDefault));
-    }
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    int current_stream = 0;
+    memcpy(out, host_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t)); // Single copy back to output array
 
-    // Launch computation on streams and overlap with memory transfers
-    for (int batch_start = 0; batch_start < BATCH_SIZE; batch_start += BATCH_SIZE / 2) {
-        int batch_size = std::min(BATCH_SIZE / 2, BATCH_SIZE - batch_start);
-
-        do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, streams[current_stream]>>>(
-            memPool.ctxs + batch_start, memPool.hash_space + batch_start, NUM_HASHING_ROUNDS);
-        CUDA_CHECK(cudaGetLastError());
-
-        for (int i = 0; i < batch_size; i++) {
-            CUDA_CHECK(cudaMemcpyAsync(host_out[current_stream] + i * INDEX_SPACE, 
-                memPool.hash_space[batch_start + i], 
-                INDEX_SPACE * sizeof(uint64_t), 
-                cudaMemcpyDeviceToHost, 
-                streams[current_stream]));
-        }
-
-        current_stream = 1 - current_stream; // Switch between streams
-    }
-
-    // Synchronize streams and copy results to output array
-    for (int i = 0; i < 2; ++i) {
-        CUDA_CHECK(cudaStreamSynchronize(streams[i]));
-        memcpy(out + i * (BATCH_SIZE / 2) * INDEX_SPACE, host_out[i], (BATCH_SIZE / 2) * INDEX_SPACE * sizeof(uint64_t));
-        CUDA_CHECK(cudaFreeHost(host_out[i]));
-        CUDA_CHECK(cudaStreamDestroy(streams[i]));
-    }
+    CUDA_CHECK(cudaFreeHost(host_out));
+    CUDA_CHECK(cudaStreamDestroy(stream));
 }
 
 __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
