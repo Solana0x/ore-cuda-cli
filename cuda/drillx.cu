@@ -31,16 +31,17 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     std::vector<uint8_t> seed(40);
     memcpy(seed.data(), challenge, 32);
 
+    #pragma omp parallel for
     for (int i = 0; i < BATCH_SIZE; i++) {
         uint64_t nonce_offset = *((uint64_t*)nonce) + i;
         memcpy(seed.data() + 32, &nonce_offset, 8);
         memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
         if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed.data(), 40)) {
-            return;
+            continue;
         }
     }
 
-    int threadsPerBlock = 1024;  // Increased number of threads per block
+    int threadsPerBlock = 256;  // Reduced threads per block for better occupancy
     int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
 
     cudaStream_t stream;
@@ -51,6 +52,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
+    #pragma omp parallel for
     for (int i = 0; i < BATCH_SIZE; i++) {
         CUDA_CHECK(cudaMemcpyAsync(out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     }
@@ -65,6 +67,7 @@ __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num
         uint32_t batch_idx = item / INDEX_SPACE;
         uint32_t i = item % INDEX_SPACE;
 
+        #pragma unroll  // Unrolling the loop for performance
         for (int round = 0; round < num_hashing_rounds; ++round) {
             hash_stage0i(ctxs[batch_idx], hash_space[batch_idx], i);
         }
@@ -89,7 +92,7 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
 
     CUDA_CHECK(cudaMemcpy(d_hashes, hashes, num_sets * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-    int threadsPerBlock = 1024;
+    int threadsPerBlock = 256;  // Reduced threads per block for better occupancy
     int blocksPerGrid = (num_sets + threadsPerBlock - 1) / threadsPerBlock;
 
     solve_all_stages_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_hashes, d_heaps, d_solutions, d_num_sols);
