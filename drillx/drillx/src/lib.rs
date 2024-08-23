@@ -1,11 +1,20 @@
-use std::sync::{Arc, Mutex};
-
 pub use equix;
 use equix::SolutionArray;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
 use rayon::prelude::*;
 use tokio::task;
+use std::sync::{Arc, Mutex};
+
+/// Generates a new Drillx hash from a challenge and nonce.
+#[inline(always)]
+pub fn hash(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> {
+    let digest = digest(challenge, nonce)?;
+    Ok(Hash {
+        d: digest,
+        h: hashv(&digest, nonce),
+    })
+}
 
 /// Generates a new Drillx hash from a challenge and nonce asynchronously.
 #[inline(always)]
@@ -47,7 +56,7 @@ pub async fn hash_with_memory_async(
     })
 }
 
-// The rest of the code remains unchanged
+// The rest of the code remains unchanged...
 
 /// Generates Drillx hashes from a challenge and nonce using pre-allocated memory and parallel processing.
 #[inline(always)]
