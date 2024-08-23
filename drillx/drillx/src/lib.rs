@@ -28,16 +28,15 @@ pub fn hash_with_memory(
 }
 
 /// Generates drillx hashes from a challenge and nonce using pre-allocated memory.
-
 #[inline(always)]
 pub fn hashes_with_memory(
     memory: &mut equix::SolverMemory,
     challenge: &[u8; 32],
     nonce: &[u8; 8],
 ) -> Vec<Hash> {
-    let mut hashes: Vec<Hash> = Vec::with_capacity(7);
+    let mut hashes = Vec::with_capacity(7); // Avoids resizing
     if let Ok(solutions) = digests_with_memory(memory, challenge, nonce) {
-        for solution in solutions {
+        for solution in solutions.iter() {
             let digest = solution.to_bytes();
             hashes.push(Hash {
                 d: digest,
@@ -62,12 +61,7 @@ pub fn seed(challenge: &[u8; 32], nonce: &[u8; 8]) -> [u8; 40] {
 fn digest(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<[u8; 16], DrillxError> {
     let seed = seed(challenge, nonce);
     let solutions = equix::solve(&seed).map_err(|_| DrillxError::BadEquix)?;
-    if solutions.is_empty() {
-        return Err(DrillxError::NoSolutions);
-    }
-    // SAFETY: The equix solver guarantees that the first solution is always valid
-    let solution = unsafe { solutions.get_unchecked(0) };
-    Ok(solution.to_bytes())
+    solutions.get(0).map_or(Err(DrillxError::NoSolutions), |s| Ok(s.to_bytes()))
 }
 
 /// Constructs a Keccak digest using pre-allocated memory.
@@ -83,12 +77,7 @@ fn digest_with_memory(
         .build(&seed)
         .map_err(|_| DrillxError::BadEquix)?;
     let solutions = equix.solve_with_memory(memory);
-    if solutions.is_empty() {
-        return Err(DrillxError::NoSolutions);
-    }
-    // SAFETY: The equix solver guarantees that the first solution is always valid
-    let solution = unsafe { solutions.get_unchecked(0) };
-    Ok(solution.to_bytes())
+    solutions.get(0).map_or(Err(DrillxError::NoSolutions), |s| Ok(s.to_bytes()))
 }
 
 /// Constructs a keccak digest from a challenge and nonce using equix hashes and pre-allocated memory.
@@ -108,20 +97,17 @@ fn digests_with_memory(
 
 /// Sorts a digest as a list of `u16` values.
 #[inline(always)]
-fn sorted(digest: [u8; 16]) -> [u8; 16] {
-    let mut sorted_digest = digest;
-    unsafe {
-        let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut sorted_digest);
-        u16_slice.sort_unstable();
-    }
-    sorted_digest
+fn sorted(mut digest: [u8; 16]) -> [u8; 16] {
+    let u16_slice: &mut [u16; 8] = bytemuck::cast_mut(&mut digest);
+    u16_slice.sort_unstable();
+    digest
 }
 
 /// Returns a Keccak hash of the digest and nonce.
 #[cfg(feature = "solana")]
 #[inline(always)]
 fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
-    solana_program::keccak::hashv(&[sorted(*digest).as_slice(), nonce.as_slice()]).to_bytes()
+    solana_program::keccak::hashv(&[&sorted(*digest), nonce]).to_bytes()
 }
 
 /// Calculates a hash using SHA3-256.
@@ -142,15 +128,10 @@ pub fn is_valid_digest(challenge: &[u8; 32], nonce: &[u8; 8], digest: &[u8; 16])
 
 /// Returns the number of leading zeros in a 32-byte buffer.
 pub fn difficulty(hash: [u8; 32]) -> u32 {
-    let mut count = 0;
-    for &byte in &hash {
+    hash.iter().fold(0, |acc, &byte| {
         let lz = byte.leading_zeros();
-        count += lz;
-        if lz < 8 {
-            break;
-        }
-    }
-    count
+        acc + lz - ((lz < 8) as u32 * (8 - lz))
+    })
 }
 
 /// The result of a Drillx hash.
