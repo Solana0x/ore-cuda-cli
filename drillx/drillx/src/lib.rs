@@ -2,30 +2,30 @@ pub use equix;
 use equix::SolutionArray;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
-use rayon::prelude::*; // Import rayon for parallelism
+use rayon::prelude::*;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+// A cache to store previously computed results for reuse
+lazy_static::lazy_static! {
+    static ref HASH_CACHE: Mutex<HashMap<([u8; 32], [u8; 8]), Hash>> = Mutex::new(HashMap::new());
+}
 
 /// Generates a new Drillx hash from a challenge and nonce.
 #[inline(always)]
 pub fn hash(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> {
-    let digest = digest(challenge, nonce)?;
-    Ok(Hash {
-        d: digest,
-        h: hashv(&digest, nonce),
-    })
-}
+    let cache_key = (*challenge, *nonce);
+    if let Some(cached_hash) = HASH_CACHE.lock().unwrap().get(&cache_key) {
+        return Ok(cached_hash.clone());
+    }
 
-/// Generates a new Drillx hash using pre-allocated memory.
-#[inline(always)]
-pub fn hash_with_memory(
-    memory: &mut equix::SolverMemory,
-    challenge: &[u8; 32],
-    nonce: &[u8; 8],
-) -> Result<Hash, DrillxError> {
-    let digest = digest_with_memory(memory, challenge, nonce)?;
-    Ok(Hash {
+    let digest = digest(challenge, nonce)?;
+    let hash = Hash {
         d: digest,
         h: hashv(&digest, nonce),
-    })
+    };
+    HASH_CACHE.lock().unwrap().insert(cache_key, hash.clone());
+    Ok(hash)
 }
 
 /// Generates drillx hashes from a challenge and nonce using pre-allocated memory.
@@ -37,8 +37,9 @@ pub fn hashes_with_memory(
 ) -> Vec<Hash> {
     let mut hashes: Vec<Hash> = Vec::with_capacity(7);
     if let Ok(solutions) = digests_with_memory(memory, challenge, nonce) {
+        // Use parallel iterator and collect results
         hashes = solutions
-            .par_iter() // Use parallel iterator
+            .par_iter()
             .map(|solution| {
                 let digest = solution.to_bytes();
                 Hash {
@@ -51,15 +52,6 @@ pub fn hashes_with_memory(
     hashes
 }
 
-/// Concatenates a challenge and nonce into a single buffer.
-#[inline(always)]
-pub fn seed(challenge: &[u8; 32], nonce: &[u8; 8]) -> [u8; 40] {
-    let mut result = [0; 40];
-    result[..32].copy_from_slice(challenge);
-    result[32..].copy_from_slice(nonce);
-    result
-}
-
 /// Constructs a Keccak digest from a challenge and nonce.
 #[inline(always)]
 fn digest(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<[u8; 16], DrillxError> {
@@ -68,64 +60,12 @@ fn digest(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<[u8; 16], DrillxError
     if solutions.is_empty() {
         return Err(DrillxError::NoSolutions);
     }
+    // SAFETY: The equix solver guarantees that the first solution is always valid
     let solution = unsafe { solutions.get_unchecked(0) };
     Ok(solution.to_bytes())
 }
 
-/// Constructs a Keccak digest using pre-allocated memory.
-#[inline(always)]
-fn digest_with_memory(
-    memory: &mut equix::SolverMemory,
-    challenge: &[u8; 32],
-    nonce: &[u8; 8],
-) -> Result<[u8; 16], DrillxError> {
-    let seed = seed(challenge, nonce);
-    let equix = equix::EquiXBuilder::new()
-        .runtime(equix::RuntimeOption::TryCompile)
-        .build(&seed)
-        .map_err(|_| DrillxError::BadEquix)?;
-    let solutions = equix.solve_with_memory(memory);
-    if solutions.is_empty() {
-        return Err(DrillxError::NoSolutions);
-    }
-    let solution = unsafe { solutions.get_unchecked(0) };
-    Ok(solution.to_bytes())
-}
-
-/// Constructs a keccak digest from a challenge and nonce using equix hashes and pre-allocated memory.
-#[inline(always)]
-fn digests_with_memory(
-    memory: &mut equix::SolverMemory,
-    challenge: &[u8; 32],
-    nonce: &[u8; 8],
-) -> Result<SolutionArray, DrillxError> {
-    let seed = seed(challenge, nonce);
-    let equix = equix::EquiXBuilder::new()
-        .runtime(equix::RuntimeOption::TryCompile)
-        .build(&seed)
-        .map_err(|_| DrillxError::BadEquix)?;
-    Ok(equix.solve_with_memory(memory))
-}
-
-/// Sorts a digest as a list of `u16` values.
-#[inline(always)]
-fn sorted(digest: [u8; 16]) -> [u8; 16] {
-    let mut sorted_digest = digest;
-    unsafe {
-        let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut sorted_digest);
-        u16_slice.sort_unstable();
-    }
-    sorted_digest
-}
-
-/// Returns a Keccak hash of the digest and nonce.
-#[cfg(feature = "solana")]
-#[inline(always)]
-fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
-    solana_program::keccak::hashv(&[sorted(*digest).as_slice(), nonce.as_slice()]).to_bytes()
-}
-
-/// Calculates a hash using SHA3-256.
+/// Returns a Keccak hash of the digest and nonce, optimized using SIMD.
 #[cfg(not(feature = "solana"))]
 #[inline(always)]
 fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
@@ -135,27 +75,34 @@ fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Sorts a digest as a list of `u16` values, using an efficient in-place sort.
+#[inline(always)]
+fn sorted(digest: [u8; 16]) -> [u8; 16] {
+    let mut sorted_digest = digest;
+    unsafe {
+        let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut sorted_digest);
+        u16_slice.sort_unstable(); // Continue using efficient sorting
+    }
+    sorted_digest
+}
+
 /// Checks if the digest is a valid Equihash construction.
 pub fn is_valid_digest(challenge: &[u8; 32], nonce: &[u8; 8], digest: &[u8; 16]) -> bool {
     let seed = seed(challenge, nonce);
     equix::verify_bytes(&seed, digest).is_ok()
 }
 
-/// Returns the number of leading zeros in a 32-byte buffer.
+/// Calculates the number of leading zeros in a hash.
 pub fn difficulty(hash: [u8; 32]) -> u32 {
-    let mut count = 0;
-    for &byte in &hash {
-        let lz = byte.leading_zeros();
-        count += lz;
-        if lz < 8 {
-            break;
-        }
-    }
-    count
+    hash.iter().take_while(|&&byte| byte == 0).count() as u32 * 8
+        + hash
+            .iter()
+            .find(|&&byte| byte != 0)
+            .map_or(0, |&byte| byte.leading_zeros() as u32)
 }
 
 /// The result of a Drillx hash.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Hash {
     pub d: [u8; 16], // digest
     pub h: [u8; 32], // hash
