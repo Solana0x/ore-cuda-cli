@@ -4,16 +4,14 @@ use equix::SolutionArray;
 use sha3::Digest;
 use rayon::prelude::*;
 use tokio::task;
+use std::convert::Infallible;
 
 /// Generates a new Drillx hash from a challenge and nonce asynchronously.
 #[inline(always)]
 pub async fn hash_async(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> {
     task::spawn_blocking(move || digest(challenge, nonce))
-        .await?
-        .map(|digest| Hash {
-            d: digest,
-            h: hashv(&digest, nonce),
-        })
+        .await
+        .map_err(|_| DrillxError::JoinError)?? // Map JoinError to DrillxError
 }
 
 /// Generates a new Drillx hash using pre-allocated memory asynchronously.
@@ -23,11 +21,9 @@ pub async fn hash_with_memory_async(
     challenge: &[u8; 32],
     nonce: &[u8; 8],
 ) -> Result<Hash, DrillxError> {
-    let digest = task::spawn_blocking(move || digest_with_memory(memory, challenge, nonce)).await??;
-    Ok(Hash {
-        d: digest,
-        h: hashv(&digest, nonce),
-    })
+    task::spawn_blocking(move || digest_with_memory(memory, challenge, nonce))
+        .await
+        .map_err(|_| DrillxError::JoinError)?? // Map JoinError to DrillxError
 }
 
 /// Generates Drillx hashes from a challenge and nonce using pre-allocated memory and parallel processing.
@@ -185,6 +181,7 @@ impl Solution {
 pub enum DrillxError {
     BadEquix,
     NoSolutions,
+    JoinError, // New error type for handling JoinError
 }
 
 impl std::fmt::Display for DrillxError {
@@ -192,6 +189,7 @@ impl std::fmt::Display for DrillxError {
         match *self {
             DrillxError::BadEquix => write!(f, "Failed Equix"),
             DrillxError::NoSolutions => write!(f, "No solutions"),
+            DrillxError::JoinError => write!(f, "JoinError in task execution"), // Message for new error type
         }
     }
 }
