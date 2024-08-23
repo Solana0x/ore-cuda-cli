@@ -4,19 +4,20 @@ use equix::SolutionArray;
 use sha3::Digest;
 use rayon::prelude::*;
 use tokio::task;
-use std::convert::Infallible;
 
 /// Generates a new Drillx hash from a challenge and nonce asynchronously.
 #[inline(always)]
 pub async fn hash_async(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> {
-    let digest_result = task::spawn_blocking(move || digest(challenge, nonce))
+    let challenge = *challenge; // Copy the data to avoid borrowing issues
+    let nonce = *nonce;         // Copy the data to avoid borrowing issues
+    let digest_result = task::spawn_blocking(move || digest(&challenge, &nonce))
         .await
         .map_err(|_| DrillxError::JoinError)?; // Handle JoinError
 
     let digest = digest_result?; // Handle DrillxError from digest function
     Ok(Hash {
         d: digest,
-        h: hashv(&digest, nonce),
+        h: hashv(&digest, &nonce),
     })
 }
 
@@ -27,14 +28,18 @@ pub async fn hash_with_memory_async(
     challenge: &[u8; 32],
     nonce: &[u8; 8],
 ) -> Result<Hash, DrillxError> {
-    let digest_result = task::spawn_blocking(move || digest_with_memory(memory, challenge, nonce))
+    let challenge = *challenge; // Copy the data to avoid borrowing issues
+    let nonce = *nonce;         // Copy the data to avoid borrowing issues
+    let memory = memory.clone(); // Clone memory for thread safety
+
+    let digest_result = task::spawn_blocking(move || digest_with_memory(&mut memory.clone(), &challenge, &nonce))
         .await
         .map_err(|_| DrillxError::JoinError)?; // Handle JoinError
 
     let digest = digest_result?; // Handle DrillxError from digest_with_memory function
     Ok(Hash {
         d: digest,
-        h: hashv(&digest, nonce),
+        h: hashv(&digest, &nonce),
     })
 }
 
