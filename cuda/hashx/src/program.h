@@ -11,7 +11,7 @@
 #include "siphash.h"
 #include "blake2.h"
 
-#define HASHX_PROGRAM_MAX_SIZE 512
+#define HASHX_PROGRAM_MAX_SIZE 1024
 
 typedef struct hashx_program {
 	instruction code[HASHX_PROGRAM_MAX_SIZE];
