@@ -38,17 +38,19 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
         memcpy(seed.data() + 32, &nonce_offset, 8);
         memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
         if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed.data(), 40)) {
-            return;
+            return;  // Handle errors properly
         }
     }
 
-    int threadsPerBlock = 256;  // Increased number of threads per block
+    int threadsPerBlock = 256;
     int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
 
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, NUM_HASHING_ROUNDS);
+    // Ensure at least one round is performed for valid hashing
+    int rounds_to_execute = (NUM_HASHING_ROUNDS > 0) ? NUM_HASHING_ROUNDS : 1;
+    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, rounds_to_execute);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
