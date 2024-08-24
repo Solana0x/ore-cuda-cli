@@ -22,7 +22,9 @@ const int NUM_HASHING_ROUNDS = 1;
     } while (0)
 
 extern "C" void set_num_hashing_rounds(int rounds) {
-    CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &rounds, sizeof(int)));
+    // Enforce a minimum of 1 hashing round
+    int adjustedRounds = (rounds > 0) ? rounds : 1;
+    CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &adjustedRounds, sizeof(int)));
 }
 
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
