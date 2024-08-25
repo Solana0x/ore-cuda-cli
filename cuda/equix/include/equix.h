@@ -15,7 +15,7 @@
 /*
  * The number of indices.
  */
-#define EQUIX_NUM_IDX 8
+#define EQUIX_NUM_IDX 16
 
 /*
  * 16-bit index.
