@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <vector>
-#include "drillx.h"  // Include the header with the constant definition
+#include "drillx.h"
 #include "equix/include/equix.h"
 #include "hashx/include/hashx.h"
 #include "equix/src/context.h"
@@ -10,9 +10,7 @@
 #include "hashx/src/context.h"
 
 const int BATCH_SIZE = 8192;
-
-// Remove __device__ __constant__ NUM_HASHING_ROUNDS; declaration
-// Use the constant directly from the header
+const int NUM_HASHING_ROUNDS = 1;
 
 #define CUDA_CHECK(call) \
     do { \
@@ -23,7 +21,11 @@ const int BATCH_SIZE = 8192;
         } \
     } while (0)
 
-// No need for set_num_hashing_rounds function since we use a compile-time constant
+extern "C" void set_num_hashing_rounds(int rounds) {
+    // Enforce a minimum of 1 hashing round
+    int adjustedRounds = (rounds > 0) ? rounds : 1;
+    CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &adjustedRounds, sizeof(int)));
+}
 
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     MemoryPool memPool(BATCH_SIZE);
@@ -31,22 +33,14 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     std::vector<uint8_t> seed(40);
     memcpy(seed.data(), challenge, 32);
 
-    uint64_t *d_out;
-    CUDA_CHECK(cudaMalloc(&d_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t)));
-
-    hashx_ctx **d_ctxs;
-    CUDA_CHECK(cudaMalloc(&d_ctxs, BATCH_SIZE * sizeof(hashx_ctx*)));
-    hashx_ctx *h_ctxs[BATCH_SIZE];
     for (int i = 0; i < BATCH_SIZE; i++) {
         uint64_t nonce_offset = *((uint64_t*)nonce) + i;
         memcpy(seed.data() + 32, &nonce_offset, 8);
-        h_ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
-        if (!h_ctxs[i] || !hashx_make(h_ctxs[i], seed.data(), 40)) {
-            return;
+        memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
+        if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed.data(), 40)) {
+            return;  // Handle errors properly
         }
     }
-
-    CUDA_CHECK(cudaMemcpy(d_ctxs, h_ctxs, BATCH_SIZE * sizeof(hashx_ctx*), cudaMemcpyHostToDevice));
 
     int threadsPerBlock = 256;
     int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
@@ -54,38 +48,29 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    // Kernel call with correct types; ensure third argument is int
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, 0);  // Use an integer placeholder
+    // Ensure at least one round is performed for valid hashing
+    int rounds_to_execute = (NUM_HASHING_ROUNDS > 0) ? NUM_HASHING_ROUNDS : 1;
+    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, rounds_to_execute);
     CUDA_CHECK(cudaGetLastError());
-
-    CUDA_CHECK(cudaMemcpy(out, d_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
+    for (int i = 0; i < BATCH_SIZE; i++) {
+        CUDA_CHECK(cudaMemcpyAsync(out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+    }
+
+    CUDA_CHECK(cudaStreamSynchronize(stream));
     CUDA_CHECK(cudaStreamDestroy(stream));
-    CUDA_CHECK(cudaFree(d_out));
-    CUDA_CHECK(cudaFree(d_ctxs));
 }
 
-// Kernel function must match the invocation
-__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int dummy_param) {
-    __shared__ uint64_t shared_hash_space[256];
-
+__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
     uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
     if (item < BATCH_SIZE * INDEX_SPACE) {
         uint32_t batch_idx = item / INDEX_SPACE;
         uint32_t i = item % INDEX_SPACE;
 
-        // Use the constant NUM_HASHING_ROUNDS directly from the header
-        for (int round = 0; round < NUM_HASHING_ROUNDS; ++round) {
+        for (int round = 0; round < num_hashing_rounds; ++round) {
             hash_stage0i(ctxs[batch_idx], hash_space[batch_idx], i);
-        }
-
-        shared_hash_space[threadIdx.x] = hash_space[batch_idx][i];
-        __syncthreads();
-
-        if (threadIdx.x < 256) {
-            hash_space[batch_idx][i] = shared_hash_space[threadIdx.x]; // Updated line for assignment
         }
     }
 }
