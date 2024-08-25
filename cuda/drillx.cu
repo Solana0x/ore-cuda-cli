@@ -21,9 +21,11 @@ const int NUM_HASHING_ROUNDS = 1;
         } \
     } while (0)
 
+__constant__ int d_num_hashing_rounds;
+
 extern "C" void set_num_hashing_rounds(int rounds) {
     int adjustedRounds = (rounds > 0) ? rounds : 1;
-    CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &adjustedRounds, sizeof(int)));
+    CUDA_CHECK(cudaMemcpyToSymbol(d_num_hashing_rounds, &adjustedRounds, sizeof(int)));
 }
 
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
@@ -32,18 +34,23 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     std::vector<uint8_t> seed(40);
     memcpy(seed.data(), challenge, 32);
 
-    // Allocate pinned memory for output to reduce transfer latency
-    uint64_t *pinned_out;
-    CUDA_CHECK(cudaHostAlloc((void**)&pinned_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaHostAllocDefault));
+    uint64_t *d_out;
+    CUDA_CHECK(cudaMalloc(&d_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t)));
 
+    // Preallocate context memory in one large block
+    hashx_ctx **d_ctxs;
+    CUDA_CHECK(cudaMalloc(&d_ctxs, BATCH_SIZE * sizeof(hashx_ctx*)));
+    hashx_ctx *h_ctxs[BATCH_SIZE];
     for (int i = 0; i < BATCH_SIZE; i++) {
         uint64_t nonce_offset = *((uint64_t*)nonce) + i;
         memcpy(seed.data() + 32, &nonce_offset, 8);
-        memPool.ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
-        if (!memPool.ctxs[i] || !hashx_make(memPool.ctxs[i], seed.data(), 40)) {
-            return;
+        h_ctxs[i] = hashx_alloc(HASHX_INTERPRETED);
+        if (!h_ctxs[i] || !hashx_make(h_ctxs[i], seed.data(), 40)) {
+            return; // Error handling
         }
     }
+
+    CUDA_CHECK(cudaMemcpy(d_ctxs, h_ctxs, BATCH_SIZE * sizeof(hashx_ctx*), cudaMemcpyHostToDevice));
 
     int threadsPerBlock = 256;
     int blocksPerGrid = (BATCH_SIZE * INDEX_SPACE + threadsPerBlock - 1) / threadsPerBlock;
@@ -51,27 +58,21 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    int rounds_to_execute = (NUM_HASHING_ROUNDS > 0) ? NUM_HASHING_ROUNDS : 1;
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(memPool.ctxs, memPool.hash_space, rounds_to_execute);
+    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, d_out, d_num_hashing_rounds);
     CUDA_CHECK(cudaGetLastError());
 
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    // Use cudaMemcpyAsync to overlap data transfer and computation
-    for (int i = 0; i < BATCH_SIZE; i++) {
-        CUDA_CHECK(cudaMemcpyAsync(pinned_out + i * INDEX_SPACE, memPool.hash_space[i], INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
-    }
+    CUDA_CHECK(cudaMemcpy(out, d_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    // Copy from pinned memory to the original output array
-    memcpy(out, pinned_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t));
 
     CUDA_CHECK(cudaStreamDestroy(stream));
-    CUDA_CHECK(cudaFreeHost(pinned_out)); // Free pinned memory
+    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(d_ctxs));
 }
 
-__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num_hashing_rounds) {
+__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, uint64_t* out, int num_hashing_rounds) {
+    __shared__ uint64_t shared_hash_space[256]; // Use shared memory to reduce global memory accesses
+
     uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
     if (item < BATCH_SIZE * INDEX_SPACE) {
         uint32_t batch_idx = item / INDEX_SPACE;
@@ -79,6 +80,15 @@ __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int num
 
         for (int round = 0; round < num_hashing_rounds; ++round) {
             hash_stage0i(ctxs[batch_idx], hash_space[batch_idx], i);
+        }
+
+        // Store result in shared memory before writing to global memory
+        shared_hash_space[threadIdx.x] = hash_space[batch_idx][i];
+        __syncthreads();
+
+        // Write results to global memory
+        if (threadIdx.x < 256) {
+            out[item] = shared_hash_space[threadIdx.x];
         }
     }
 }
@@ -94,7 +104,7 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
     CUDA_CHECK(cudaMalloc(&d_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution)));
     CUDA_CHECK(cudaMalloc(&d_num_sols, num_sets * sizeof(uint32_t)));
 
-    // Allocate pinned memory for host arrays
+    // Use pinned memory for host data
     equix_solution *h_solutions;
     uint32_t *h_num_sols;
     CUDA_CHECK(cudaHostAlloc(&h_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution), cudaHostAllocDefault));
@@ -110,11 +120,8 @@ extern "C" void solve_all_stages(uint64_t *hashes, uint8_t *out, uint32_t *sols,
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Use cudaMemcpyAsync to overlap data transfer and computation
-    CUDA_CHECK(cudaMemcpyAsync(h_solutions, d_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpyAsync(h_num_sols, d_num_sols, num_sets * sizeof(uint32_t), cudaMemcpyDeviceToHost));
-
-    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaMemcpy(h_solutions, d_solutions, num_sets * EQUIX_MAX_SOLS * sizeof(equix_solution), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_num_sols, d_num_sols, num_sets * sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
     for (int i = 0; i < num_sets; i++) {
         sols[i] = h_num_sols[i];
