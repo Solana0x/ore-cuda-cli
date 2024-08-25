@@ -10,7 +10,7 @@
 #include "hashx/src/context.h"
 
 const int BATCH_SIZE = 8192;
-__device__ __constant__ int d_num_hashing_rounds; // Use __constant__ for the number of rounds
+__device__ __constant__ int d_num_hashing_rounds; // Correctly define as a device constant
 
 #define CUDA_CHECK(call) \
     do { \
@@ -23,7 +23,7 @@ __device__ __constant__ int d_num_hashing_rounds; // Use __constant__ for the nu
 
 extern "C" void set_num_hashing_rounds(int rounds) {
     int adjustedRounds = (rounds > 0) ? rounds : 1;
-    CUDA_CHECK(cudaMemcpyToSymbol(d_num_hashing_rounds, &adjustedRounds, sizeof(int)));
+    CUDA_CHECK(cudaMemcpyToSymbol(d_num_hashing_rounds, &adjustedRounds, sizeof(int))); // Set the constant memory
 }
 
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
@@ -55,8 +55,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    // Correct the kernel launch to match the kernel definition
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, d_out);
+    // Kernel call with correct arguments
+    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, d_out); // Removed extra argument
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(out, d_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
@@ -76,6 +76,7 @@ __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, uint64_
         uint32_t batch_idx = item / INDEX_SPACE;
         uint32_t i = item % INDEX_SPACE;
 
+        // Use the constant memory value directly
         for (int round = 0; round < d_num_hashing_rounds; ++round) {
             hash_stage0i(ctxs[batch_idx], hash_space[batch_idx], i);
         }
