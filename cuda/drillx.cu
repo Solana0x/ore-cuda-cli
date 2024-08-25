@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <vector>
-#include "drillx.h"
+#include "drillx.h"  // Include the header with the correct declaration
 #include "equix/include/equix.h"
 #include "hashx/include/hashx.h"
 #include "equix/src/context.h"
@@ -11,8 +11,8 @@
 
 const int BATCH_SIZE = 8192;
 
-// Declare NUM_HASHING_ROUNDS as an extern constant variable for proper linkage
-__device__ __constant__ int NUM_HASHING_ROUNDS;
+// Use the external constant declaration from the header
+// No need to redefine it here
 
 #define CUDA_CHECK(call) \
     do { \
@@ -23,10 +23,8 @@ __device__ __constant__ int NUM_HASHING_ROUNDS;
         } \
     } while (0)
 
-// Function to set the number of hashing rounds in constant memory
 extern "C" void set_num_hashing_rounds(int rounds) {
     int adjustedRounds = (rounds > 0) ? rounds : 1;
-    // Use cudaMemcpyToSymbol to copy the value into constant memory on the device
     CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &adjustedRounds, sizeof(int)));
 }
 
@@ -59,8 +57,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    // Kernel call with correct arguments, using constant memory for NUM_HASHING_ROUNDS
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, d_out);
+    // Call the kernel function with correct types; ensure third argument is int
+    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, 0);  // Use an integer placeholder
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(out, d_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
@@ -72,8 +70,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     CUDA_CHECK(cudaFree(d_ctxs));
 }
 
-// Update the kernel to use NUM_HASHING_ROUNDS directly from constant memory
-__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, uint64_t* out) {
+// Kernel function must match the invocation
+__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int dummy_param) {
     __shared__ uint64_t shared_hash_space[256];
 
     uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
@@ -90,7 +88,7 @@ __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, uint64_
         __syncthreads();
 
         if (threadIdx.x < 256) {
-            out[item] = shared_hash_space[threadIdx.x]; // Updated line for assignment
+            hash_space[batch_idx][i] = shared_hash_space[threadIdx.x]; // Updated line for assignment
         }
     }
 }
