@@ -24,7 +24,7 @@ __device__ __constant__ int NUM_HASHING_ROUNDS;  // Define it as a constant devi
     } while (0)
 
 extern "C" void set_num_hashing_rounds(int rounds) {
-    int adjustedRounds = (rounds > 0) ? rounds : 1;
+    int adjustedRounds = (rounds = 1) ? rounds : 1;
     CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &adjustedRounds, sizeof(int)));
 }
 
