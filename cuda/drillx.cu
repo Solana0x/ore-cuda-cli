@@ -56,7 +56,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     CUDA_CHECK(cudaStreamCreate(&stream));
 
     // Kernel call with correct arguments
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, d_out); // Removed extra argument
+    // Since d_out is not supposed to be passed if expecting int, we only pass expected types
+    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, 0); // Passing 0 as a placeholder for int
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(out, d_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
@@ -68,7 +69,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     CUDA_CHECK(cudaFree(d_ctxs));
 }
 
-__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, uint64_t* out) {
+// Update the kernel to match expected types
+__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int dummy_param) {
     __shared__ uint64_t shared_hash_space[256];
 
     uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
@@ -85,7 +87,7 @@ __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, uint64_
         __syncthreads();
 
         if (threadIdx.x < 256) {
-            out[item] = shared_hash_space[threadIdx.x];
+            hash_space[batch_idx][i] = shared_hash_space[threadIdx.x]; // Updated line for assignment
         }
     }
 }
