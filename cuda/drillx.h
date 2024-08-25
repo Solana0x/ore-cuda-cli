@@ -10,7 +10,7 @@
 #include "hashx/src/context.h"
 
 extern const int BATCH_SIZE;
-extern __device__ __constant__ int NUM_HASHING_ROUNDS;
+const int NUM_HASHING_ROUNDS = 1;
 
 #define CUDA_CHECK(call) \
     do { \
