@@ -10,7 +10,9 @@
 #include "hashx/src/context.h"
 
 const int BATCH_SIZE = 8192;
-__device__ __constant__ int d_num_hashing_rounds; // Correctly define as a device constant
+
+// Declare NUM_HASHING_ROUNDS as an extern constant variable for proper linkage
+__device__ __constant__ int NUM_HASHING_ROUNDS;
 
 #define CUDA_CHECK(call) \
     do { \
@@ -21,9 +23,11 @@ __device__ __constant__ int d_num_hashing_rounds; // Correctly define as a devic
         } \
     } while (0)
 
+// Function to set the number of hashing rounds in constant memory
 extern "C" void set_num_hashing_rounds(int rounds) {
     int adjustedRounds = (rounds > 0) ? rounds : 1;
-    CUDA_CHECK(cudaMemcpyToSymbol(d_num_hashing_rounds, &adjustedRounds, sizeof(int))); // Set the constant memory
+    // Use cudaMemcpyToSymbol to copy the value into constant memory on the device
+    CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &adjustedRounds, sizeof(int)));
 }
 
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
@@ -55,9 +59,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    // Kernel call with correct arguments
-    // Since d_out is not supposed to be passed if expecting int, we only pass expected types
-    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, 0); // Passing 0 as a placeholder for int
+    // Kernel call with correct arguments, using constant memory for NUM_HASHING_ROUNDS
+    do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, d_out);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(out, d_out, BATCH_SIZE * INDEX_SPACE * sizeof(uint64_t), cudaMemcpyDeviceToHost));
@@ -69,8 +72,8 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     CUDA_CHECK(cudaFree(d_ctxs));
 }
 
-// Update the kernel to match expected types
-__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int dummy_param) {
+// Update the kernel to use NUM_HASHING_ROUNDS directly from constant memory
+__global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, uint64_t* out) {
     __shared__ uint64_t shared_hash_space[256];
 
     uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
@@ -79,7 +82,7 @@ __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int dum
         uint32_t i = item % INDEX_SPACE;
 
         // Use the constant memory value directly
-        for (int round = 0; round < d_num_hashing_rounds; ++round) {
+        for (int round = 0; round < NUM_HASHING_ROUNDS; ++round) {
             hash_stage0i(ctxs[batch_idx], hash_space[batch_idx], i);
         }
 
@@ -87,7 +90,7 @@ __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int dum
         __syncthreads();
 
         if (threadIdx.x < 256) {
-            hash_space[batch_idx][i] = shared_hash_space[threadIdx.x]; // Updated line for assignment
+            out[item] = shared_hash_space[threadIdx.x]; // Updated line for assignment
         }
     }
 }
