@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <vector>
-#include "drillx.h"  // Ensure consistent declaration is included
+#include "drillx.h"  // Include the header with the constant definition
 #include "equix/include/equix.h"
 #include "hashx/include/hashx.h"
 #include "equix/src/context.h"
@@ -11,8 +11,8 @@
 
 const int BATCH_SIZE = 8192;
 
-// Define NUM_HASHING_ROUNDS here
-__device__ __constant__ int NUM_HASHING_ROUNDS;  // Define it as a constant device variable
+// Remove __device__ __constant__ NUM_HASHING_ROUNDS; declaration
+// Use the constant directly from the header
 
 #define CUDA_CHECK(call) \
     do { \
@@ -23,10 +23,7 @@ __device__ __constant__ int NUM_HASHING_ROUNDS;  // Define it as a constant devi
         } \
     } while (0)
 
-extern "C" void set_num_hashing_rounds(int rounds) {
-    int adjustedRounds = (rounds = 1) ? rounds : 1;
-    CUDA_CHECK(cudaMemcpyToSymbol(NUM_HASHING_ROUNDS, &adjustedRounds, sizeof(int)));
-}
+// No need for set_num_hashing_rounds function since we use a compile-time constant
 
 extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     MemoryPool memPool(BATCH_SIZE);
@@ -79,7 +76,7 @@ __global__ void do_hash_stage0i(hashx_ctx** ctxs, uint64_t** hash_space, int dum
         uint32_t batch_idx = item / INDEX_SPACE;
         uint32_t i = item % INDEX_SPACE;
 
-        // Use the constant memory value directly
+        // Use the constant NUM_HASHING_ROUNDS directly from the header
         for (int round = 0; round < NUM_HASHING_ROUNDS; ++round) {
             hash_stage0i(ctxs[batch_idx], hash_space[batch_idx], i);
         }
