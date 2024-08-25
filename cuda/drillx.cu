@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <vector>
-#include "drillx.h"  // Include the header with the correct declaration
+#include "drillx.h"  // Ensure consistent declaration is included
 #include "equix/include/equix.h"
 #include "hashx/include/hashx.h"
 #include "equix/src/context.h"
@@ -11,8 +11,8 @@
 
 const int BATCH_SIZE = 8192;
 
-// Use the external constant declaration from the header
-// No need to redefine it here
+// Define NUM_HASHING_ROUNDS here
+__device__ __constant__ int NUM_HASHING_ROUNDS;  // Define it as a constant device variable
 
 #define CUDA_CHECK(call) \
     do { \
@@ -57,7 +57,7 @@ extern "C" void hash(uint8_t *challenge, uint8_t *nonce, uint64_t *out) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    // Call the kernel function with correct types; ensure third argument is int
+    // Kernel call with correct types; ensure third argument is int
     do_hash_stage0i<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_ctxs, memPool.hash_space, 0);  // Use an integer placeholder
     CUDA_CHECK(cudaGetLastError());
 
