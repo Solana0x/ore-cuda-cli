@@ -1,6 +1,8 @@
 #ifndef DRILLX_H
 #define DRILLX_H
 
+#include <stdint.h>
+
 #include "equix/include/equix.h"
 #include "hashx/include/hashx.h"
 #include "equix/src/context.h"
@@ -8,7 +10,7 @@
 #include "hashx/src/context.h"
 
 extern const int BATCH_SIZE;
-extern const int NUM_HASHING_ROUNDS;
+extern __device__ __constant__ int NUM_HASHING_ROUNDS;
 
 #define CUDA_CHECK(call) \
     do { \
